@@ -2,6 +2,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import requests
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Page configuration
 st.set_page_config(
@@ -156,39 +161,68 @@ def fetch_weather_data():
 
 def fetch_notifications():
     """
-    Fetch recent notifications from API
-    TODO: Implement API call to notification service
+    Fetch recent notifications from ntfy.sh API
+    Returns a DataFrame with TIMESTAMP, TITLE, MESSAGE, DEVICE ID columns
     """
-    # Placeholder data
+    import os
+    
+    # Get topic from environment variable or use default
+    topic = os.environ.get('NTFY_TOPIC', 'washingLineMonitor')
+    url = f"https://ntfy.sh/{topic}/json?poll=1&since=latest"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        print(f"NTFY Response Text: {response.text}")
+        print(f"NTFY Response Status Code: {response.status_code}")
+        if response.status_code == 200:
+            # Parse response - ntfy returns newline-delimited JSON
+            notifications = []
+            for line in response.text.strip().split('\n'):
+                if line:
+                    try:
+                        notif = eval(line)  # ntfy returns JSON per line
+                        notifications.append(notif)
+                    except:
+                        pass
+            
+            if notifications:
+                # Convert to DataFrame format
+                df_data = {
+                    "TIMESTAMP": [],
+                    "TITLE": [],
+                    "MESSAGE": [],
+                    "DEVICE ID": []
+                }
+                
+                for notif in notifications:
+                    # Convert Unix timestamp to readable format
+                    timestamp = datetime.fromtimestamp(notif.get('time', 0))
+                    df_data["TIMESTAMP"].append(timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+                    df_data["TITLE"].append(notif.get('title', 'N/A'))
+                    df_data["MESSAGE"].append(notif.get('message', ''))
+                    # Try to extract device ID from message if present
+                    message = notif.get('message', '')
+                    device_id = "--"
+                    if "Device " in message:
+                        # Extract device ID from message like "Device device_001 reported..."
+                        parts = message.split("Device ")
+                        if len(parts) > 1:
+                            device_id = parts[1].split()[0]
+                    df_data["DEVICE ID"].append(device_id)
+                
+                return pd.DataFrame(df_data)
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching notifications: {e}")
+    except Exception as e:
+        print(f"Error processing notifications: {e}")
+    
+    # Return empty DataFrame on failure
     return pd.DataFrame({
-        "TIMESTAMP": [
-            "2026-01-18 14:32:15",
-            "2026-01-18 14:28:33",
-            "2026-01-18 14:25:12",
-            "2026-01-18 14:15:47",
-            "2026-01-18 14:08:22"
-        ],
-        "TITLE": [
-            "Temperature Alert",
-            "Connection Lost",
-            "Vibration Alert",
-            "Motion Detected",
-            "System Update"
-        ],
-        "MESSAGE": [
-            "High temperature detected",
-            "Device went offline",
-            "High vibration detected",
-            "Unusual activity detected",
-            "Firmware updated successfully"
-        ],
-        "DEVICE ID": [
-            "IOT-B01",
-            "IOT-B05",
-            "IOT-B09",
-            "IOT-B03",
-            "IOT-B02"
-        ]
+        "TIMESTAMP": [],
+        "TITLE": [],
+        "MESSAGE": [],
+        "DEVICE ID": []
     })
 
 def fetch_system_metrics():
@@ -221,44 +255,125 @@ def fetch_system_metrics():
 def fetch_device_count():
     """
     Fetch total device count from API
-    TODO: Implement API call to device service
+    Returns the number of registered devices
     """
-    # Placeholder data
-    return 247
+    import os
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    print(f"API_ENDPOINT: {endpoint}")
+    url = f"{endpoint}/api/v1/devices"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            devices = response.json()
+            return len(devices)
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching device count: {e}")
+    except Exception as e:
+        print(f"Error processing device count: {e}")
+    
+    # Return 0 on failure
+    return 0
 
 def fetch_device_list():
     """
-    Fetch device list from API
-    TODO: Implement API call to device service
+    Fetch device list from API with complete information
+    Combines data from /devices, /devices/{id}, and /telemetry/{id} endpoints
+    Returns a DataFrame with DEVICE_ID, LOCATION, LAST_ACTIVE, STATUS columns
     """
-    # Placeholder data with varied timestamps
-    now = datetime.now()
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     
-    devices = []
-    locations = ["Building A", "Building B", "Building C", "Warehouse 1", "Warehouse 2", "Factory Floor"]
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
     
-    for i in range(1, 13):
-        device_id = f"IOT-B{i:02d}"
-        # Mix of active (within 24h) and inactive devices
-        if i <= 8:
-            # Active devices
-            hours_ago = (i - 1) * 2
-            last_active = (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
-            status = "Active"
-        else:
-            # Inactive devices
-            days_ago = (i - 7) * 2
-            last_active = (now - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
-            status = "Inactive"
-        
-        devices.append({
+    def fetch_device_details(device_id):
+        """Fetch configuration and telemetry for a single device"""
+        device_info = {
             "DEVICE_ID": device_id,
-            "LAST_ACTIVE": last_active,
-            "STATUS": status,
-            "LOCATION": locations[(i - 1) % len(locations)]
-        })
+            "LOCATION": "Unknown",
+            "LAST_ACTIVE": "--",
+            "STATUS": "Unknown"
+        }
+        
+        try:
+            # Fetch device configuration for location
+            config_response = requests.get(
+                f"{endpoint}/api/v1/devices/{device_id}",
+                timeout=10
+            )
+            
+            if config_response.status_code == 200:
+                config_data = config_response.json()
+                configuration = config_data.get('configuration', {})
+                device_info["LOCATION"] = configuration.get('location', 'Unknown')
+            
+            # Fetch telemetry data for last_active and status
+            telemetry_response = requests.get(
+                f"{endpoint}/api/v1/telemetry/{device_id}",
+                timeout=10
+            )
+            
+            if telemetry_response.status_code == 200:
+                telemetry_data = telemetry_response.json()
+                
+                if telemetry_data and len(telemetry_data) > 0:
+                    # Get latest timestamp (first item, as results are ordered DESC)
+                    latest = telemetry_data[0]
+                    timestamp_str = latest.get('timestamp', '')
+                    
+                    if timestamp_str:
+                        # Parse timestamp
+                        try:
+                            last_active_dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                            device_info["LAST_ACTIVE"] = last_active_dt.strftime("%Y-%m-%d %H:%M:%S")
+                            
+                            # Determine status based on last activity
+                            now = datetime.now(last_active_dt.tzinfo) if last_active_dt.tzinfo else datetime.now()
+                            time_diff = now - last_active_dt
+                            
+                            if time_diff <= timedelta(hours=1):
+                                device_info["STATUS"] = "Active"
+                            else:
+                                device_info["STATUS"] = "Inactive"
+                        except Exception as e:
+                            print(f"Error parsing timestamp for {device_id}: {e}")
+        
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching details for device {device_id}: {e}")
+        except Exception as e:
+            print(f"Error processing device {device_id}: {e}")
+        
+        return device_info
     
-    return pd.DataFrame(devices)
+    try:
+        # Step 1: Fetch all device IDs
+        response = requests.get(f"{endpoint}/api/v1/devices", timeout=10)
+        
+        if response.status_code == 200:
+            devices_list = response.json()
+            device_ids = [d.get('device_id') for d in devices_list if 'device_id' in d]
+            
+            # Step 2: Fetch details for each device concurrently
+            devices = []
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_device = {executor.submit(fetch_device_details, dev_id): dev_id 
+                                  for dev_id in device_ids}
+                
+                for future in as_completed(future_to_device):
+                    device_info = future.result()
+                    devices.append(device_info)
+            
+            return pd.DataFrame(devices)
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching device list: {e}")
+    except Exception as e:
+        print(f"Error processing device list: {e}")
+    
+    # Return empty DataFrame on failure
+    return pd.DataFrame(columns=["DEVICE_ID", "LOCATION", "LAST_ACTIVE", "STATUS"])
 
 # ============================================================================
 # SIDEBAR

@@ -1,2 +1,131 @@
 # washingLineMonitor-S004-dashboard
-Dashboard for the washling monitor. links with backend in washingLineMonitor-S003-webserver
+
+Dashboard for the washing line monitor. Links with backend in washingLineMonitor-S003-webserver.
+
+## Features
+
+- **Real-time Weather Display**: Shows current weather conditions including temperature, humidity, wind speed, and precipitation
+- **Device Management**: View and manage all IoT devices with their status, location, and last activity
+- **Notifications**: Monitor system alerts and device notifications from ntfy.sh
+- **System Metrics**: Track database usage, data rates, and request performance
+
+## Setup
+
+### Prerequisites
+
+- Python 3.8+
+- Access to the washingLineMonitor-S003-webserver API
+- ntfy.sh topic for notifications
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd washingLineMonitor-S004-dashboard
+```
+
+2. Create a virtual environment:
+```bash
+python -m venv .venv
+```
+
+3. Activate the virtual environment:
+- Windows: `.venv\Scripts\activate`
+- Linux/Mac: `source .venv/bin/activate`
+
+4. Install dependencies:
+```bash
+pip install streamlit pandas requests python-dotenv
+```
+
+5. Configure environment variables:
+```bash
+# Copy the example env file
+cp .env.example .env
+
+# Edit .env with your configuration
+```
+
+Required environment variables:
+- `API_ENDPOINT`: Base URL for the washing line monitor API (default: http://washinglinemonitor-s003-webserver-app)
+- `NTFY_TOPIC`: ntfy.sh topic for notifications (default: washingLineMonitor)
+
+### Running the Dashboard
+
+```bash
+streamlit run app.py
+```
+
+The dashboard will be available at `http://localhost:8501`
+
+## API Integration
+
+The dashboard integrates with the following API endpoints:
+
+### Device Management
+- `GET /api/v1/devices` - List all devices
+- `GET /api/v1/devices/{device_id}` - Get device configuration
+- `GET /api/v1/telemetry/{device_id}` - Get device telemetry data
+
+### Notifications
+- `GET https://ntfy.sh/{topic}/json?poll=1&since=24h` - Fetch notifications
+
+## Backend Functions
+
+### `fetch_notifications()`
+Fetches recent notifications from ntfy.sh. Returns a DataFrame with timestamp, title, message, and device ID.
+
+### `fetch_device_count()`
+Returns the total number of registered devices in the system.
+
+### `fetch_device_list()`
+Fetches complete device information including:
+- Device ID
+- Location (from device configuration)
+- Last active timestamp (from telemetry data)
+- Status (Active/Inactive based on last activity within 1 hour)
+
+This function makes concurrent requests to optimize performance when fetching data for multiple devices.
+
+## Project Structure
+
+```
+washingLineMonitor-S004-dashboard/
+├── app.py                      # Main Streamlit application
+├── .prompts/                   # Prompt files for development
+│   └── backend_data_pull.prompt.md
+├── .env.example               # Example environment configuration
+├── .gitignore
+└── README.md
+```
+
+## Development
+
+The dashboard is built with Streamlit and uses:
+- **pandas** for data manipulation
+- **requests** for API calls
+- **concurrent.futures** for parallel API requests
+- **datetime** for timestamp handling
+
+## Troubleshooting
+
+### API Connection Issues
+- Verify the `API_ENDPOINT` is correct and the backend server is running
+- Check network connectivity to the backend server
+- Review the console output for error messages
+
+### No Notifications Appearing
+- Verify the `NTFY_TOPIC` matches the topic used by the backend
+- Check that notifications are being sent to ntfy.sh
+- Test the topic directly at https://ntfy.sh/{your-topic}
+
+### Device Status Shows "Unknown"
+- Ensure devices have sent telemetry data recently
+- Check that device configurations include location information
+- Verify the telemetry endpoint is returning data
+
+## License
+
+[Add license information here]
+
