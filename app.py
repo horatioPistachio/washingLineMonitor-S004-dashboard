@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import requests
 
 # Page configuration
 st.set_page_config(
@@ -97,14 +98,60 @@ def fetch_weather_data():
     Fetch weather data from API
     TODO: Implement API call to weather service
     """
-    # Placeholder data
+
+    url = "https://api.open-meteo.com/v1/forecast"
+
+    params = {
+        "latitude": -26.829099,      # Latitude for Sydney
+        "longitude": 153.043996,     # Longitude for Sydney
+        "current": "temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m",
+        "hourly": "temperature_2m,rain",
+        "timezone": "auto",
+        "models": "best_match" # OPTIONAL: Explicitly requests BOM's model
+    }
+
+    wmo_codes = {
+        0: "Clear Sky",
+        1: "Mainly Clear",
+        2: "Partly Cloudy",
+        3: "Overcast",
+        45: "Fog",
+        51: "Drizzle",
+        61: "Slight Rain",
+        80: "Rain Showers"
+    }
+
+    # 2. Make the request
+    try:
+        response = requests.get(url, params=params, timeout=5)
+
+        # 3. Handle the response
+        if response.status_code == 200:
+            data = response.json()
+            current = data['current']
+            
+            return {
+                "temperature": current.get('temperature_2m', '--'),
+                "condition": wmo_codes.get(current.get('weather_code', 0), "--"),
+                "wind_speed": current.get('wind_speed_10m', '--'),
+                "precipitation": current.get('precipitation', '--'),
+                "humidity": current.get('relative_humidity_2m', '--'),
+                "location": "Banya"
+            }
+        else:
+            print(f"Error fetching data: Status code {response.status_code}")
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching weather data: {e}")
+    
+    # Return default values if API call fails
     return {
-        "temperature": 24,
-        "condition": "Partly Cloudy",
-        "wind_speed": 12,
-        "precipitation": 20,
-        "humidity": 65,
-        "location": "San Francisco, CA"
+        "temperature": "--",
+        "condition": "--",
+        "wind_speed": "--",
+        "precipitation": "--",
+        "humidity": "--",
+        "location": "Banya"
     }
 
 def fetch_notifications():
