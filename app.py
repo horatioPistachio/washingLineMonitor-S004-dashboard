@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Page configuration
 st.set_page_config(
@@ -42,6 +42,48 @@ st.markdown("""
     hr {
         margin-top: 0.5rem;
         margin-bottom: 0.5rem;
+    }
+    /* Radio button bubble styling */
+    .stRadio > div {
+        gap: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+    .stRadio > div > label {
+        background-color: transparent;
+        border-radius: 20px;
+        padding: 12px 20px;
+        border: 1px solid #e0e0e0;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        display: block;
+        width: 100%;
+        text-align: center;
+    }
+    .stRadio > div > label:hover {
+        background-color: #f0f0f0;
+        border-color: #2176FF;
+    }
+    .stRadio > div > label[data-baseweb="radio"] > div:first-child {
+        display: none;
+    }
+    .stRadio > div > label > div {
+        padding-left: 0 !important;
+    }
+    /* Style for selected radio button - multiple selectors for compatibility */
+    .stRadio > div > label:has(input:checked),
+    .stRadio > div > label[data-checked="true"],
+    div[role="radiogroup"] label:has(input:checked) {
+        background-color: #2176FF !important;
+        color: white !important;
+        border-color: #2176FF !important;
+    }
+    /* Ensure text color is white when selected */
+    .stRadio > div > label:has(input:checked) > div,
+    .stRadio > div > label[data-checked="true"] > div,
+    div[role="radiogroup"] label:has(input:checked) > div {
+        color: white !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -137,6 +179,40 @@ def fetch_device_count():
     # Placeholder data
     return 247
 
+def fetch_device_list():
+    """
+    Fetch device list from API
+    TODO: Implement API call to device service
+    """
+    # Placeholder data with varied timestamps
+    now = datetime.now()
+    
+    devices = []
+    locations = ["Building A", "Building B", "Building C", "Warehouse 1", "Warehouse 2", "Factory Floor"]
+    
+    for i in range(1, 13):
+        device_id = f"IOT-B{i:02d}"
+        # Mix of active (within 24h) and inactive devices
+        if i <= 8:
+            # Active devices
+            hours_ago = (i - 1) * 2
+            last_active = (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+            status = "Active"
+        else:
+            # Inactive devices
+            days_ago = (i - 7) * 2
+            last_active = (now - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+            status = "Inactive"
+        
+        devices.append({
+            "DEVICE_ID": device_id,
+            "LAST_ACTIVE": last_active,
+            "STATUS": status,
+            "LOCATION": locations[(i - 1) % len(locations)]
+        })
+    
+    return pd.DataFrame(devices)
+
 # ============================================================================
 # SIDEBAR
 # ============================================================================
@@ -166,75 +242,155 @@ with st.sidebar:
 # MAIN CONTENT
 # ============================================================================
 
-# Weather Header
-weather_data = fetch_weather_data()  # API call placeholder
+if menu_selection == "Dashboard":
+    # Weather Header
+    weather_data = fetch_weather_data()  # API call placeholder
 
-st.markdown(f"""
-    <div class="weather-header">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <span style="font-size: 42px; font-weight: bold;">☀️ {weather_data['temperature']}°C</span>
-                <span style="margin-left: 15px; font-size: 16px;">{weather_data['condition']}</span>
-            </div>
-            <div style="display: flex; gap: 25px; align-items: center; font-size: 15px;">
-                <div>💨 {weather_data['wind_speed']} km/h</div>
-                <div>🌧️ {weather_data['precipitation']}%</div>
-                <div>💧 Humidity {weather_data['humidity']}%</div>
-            </div>
-            <div style="text-align: right;">
-                <div style="font-size: 12px; opacity: 0.9;">Location</div>
-                <div style="font-weight: bold; font-size: 15px;">{weather_data['location']}</div>
+    st.markdown(f"""
+        <div class="weather-header">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-size: 42px; font-weight: bold;">☀️ {weather_data['temperature']}°C</span>
+                    <span style="margin-left: 15px; font-size: 16px;">{weather_data['condition']}</span>
+                </div>
+                <div style="display: flex; gap: 25px; align-items: center; font-size: 15px;">
+                    <div>💨 {weather_data['wind_speed']} km/h</div>
+                    <div>🌧️ {weather_data['precipitation']}%</div>
+                    <div>💧 Humidity {weather_data['humidity']}%</div>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 12px; opacity: 0.9;">Location</div>
+                    <div style="font-weight: bold; font-size: 15px;">{weather_data['location']}</div>
+                </div>
             </div>
         </div>
-    </div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-# Recent Notifications Section
-st.markdown("### Recent Notifications")
-notifications_df = fetch_notifications()  # API call placeholder
-st.dataframe(
-    notifications_df,
-    width='stretch',
-    hide_index=True,
-    height=220
-)
+    # Recent Notifications Section
+    st.markdown("### Recent Notifications")
+    notifications_df = fetch_notifications()  # API call placeholder
+    st.dataframe(
+        notifications_df,
+        width='stretch',
+        hide_index=True,
+        height=220
+    )
 
-# System State Section
-st.markdown("**System State**")
+    # System State Section
+    st.markdown("**System State**")
 
-# Fetch metrics data
-metrics = fetch_system_metrics()  # API call placeholder
+    # Fetch metrics data
+    metrics = fetch_system_metrics()  # API call placeholder
 
-# Create 3 columns for metrics
-col1, col2, col3 = st.columns(3)
+    # Create 3 columns for metrics
+    col1, col2, col3 = st.columns(3)
 
-# Metric 1: DB Space Usage
-with col1:
-    st.markdown("<small>DB Space Usage</small>", unsafe_allow_html=True)
-    db_metrics = metrics["db_space_usage"]
-    st.markdown(f"### {db_metrics['percentage']}% <small>of {db_metrics['total_gb']} GB</small>", unsafe_allow_html=True)
-    st.progress(db_metrics['percentage'] / 100)
+    # Metric 1: DB Space Usage
+    with col1:
+        st.markdown("<small>DB Space Usage</small>", unsafe_allow_html=True)
+        db_metrics = metrics["db_space_usage"]
+        st.markdown(f"### {db_metrics['percentage']}% <small>of {db_metrics['total_gb']} GB</small>", unsafe_allow_html=True)
+        st.progress(db_metrics['percentage'] / 100)
+        
+        change_color = "green" if db_metrics['change_type'] == "decrease" else "red"
+        change_arrow = "↓" if db_metrics['change_type'] == "decrease" else "↑"
+        st.markdown(f"<small>:{change_color}[{change_arrow} {abs(db_metrics['change_from_avg'])}% from average]</small>", unsafe_allow_html=True)
+
+    # Metric 2: Device Data Rate
+    with col2:
+        st.markdown("<small>Device Data Rate</small>", unsafe_allow_html=True)
+        rate_metrics = metrics["device_data_rate"]
+        st.markdown(f"### {rate_metrics['value']} {rate_metrics['unit']}", unsafe_allow_html=True)
+        
+        change_color = "green" if rate_metrics['change_type'] == "increase" else "red"
+        change_arrow = "↑" if rate_metrics['change_type'] == "increase" else "↓"
+        st.markdown(f"<small>:{change_color}[{change_arrow} {abs(rate_metrics['change_from_avg'])}% from average]</small>", unsafe_allow_html=True)
+
+    # Metric 3: Average Request Time
+    with col3:
+        st.markdown("<small>Average Request Time</small>", unsafe_allow_html=True)
+        time_metrics = metrics["avg_request_time"]
+        st.markdown(f"### {time_metrics['value']} {time_metrics['unit']}", unsafe_allow_html=True)
+        
+        change_color = "green" if time_metrics['change_type'] == "decrease" else "red"
+        change_arrow = "↓" if time_metrics['change_type'] == "decrease" else "↑"
+        st.markdown(f"<small>:{change_color}[{change_arrow} {abs(time_metrics['change_from_last_week'])}ms from last week]</small>", unsafe_allow_html=True)
+
+elif menu_selection == "Devices":
+    # Device Management Page
+    st.markdown("### Device Management")
+    st.markdown("---")
     
-    change_color = "green" if db_metrics['change_type'] == "decrease" else "red"
-    change_arrow = "↓" if db_metrics['change_type'] == "decrease" else "↑"
-    st.markdown(f"<small>:{change_color}[{change_arrow} {abs(db_metrics['change_from_avg'])}% from average]</small>", unsafe_allow_html=True)
-
-# Metric 2: Device Data Rate
-with col2:
-    st.markdown("<small>Device Data Rate</small>", unsafe_allow_html=True)
-    rate_metrics = metrics["device_data_rate"]
-    st.markdown(f"### {rate_metrics['value']} {rate_metrics['unit']}", unsafe_allow_html=True)
+    # Fetch device data
+    devices_df = fetch_device_list()  # API call placeholder
     
-    change_color = "green" if rate_metrics['change_type'] == "increase" else "red"
-    change_arrow = "↑" if rate_metrics['change_type'] == "increase" else "↓"
-    st.markdown(f"<small>:{change_color}[{change_arrow} {abs(rate_metrics['change_from_avg'])}% from average]</small>", unsafe_allow_html=True)
-
-# Metric 3: Average Request Time
-with col3:
-    st.markdown("<small>Average Request Time</small>", unsafe_allow_html=True)
-    time_metrics = metrics["avg_request_time"]
-    st.markdown(f"### {time_metrics['value']} {time_metrics['unit']}", unsafe_allow_html=True)
+    # Device Summary Metrics
+    total_devices = len(devices_df)
+    active_devices = len(devices_df[devices_df['STATUS'] == 'Active'])
     
-    change_color = "green" if time_metrics['change_type'] == "decrease" else "red"
-    change_arrow = "↓" if time_metrics['change_type'] == "decrease" else "↑"
-    st.markdown(f"<small>:{change_color}[{change_arrow} {abs(time_metrics['change_from_last_week'])}ms from last week]</small>", unsafe_allow_html=True)
+    # Create 2 columns for summary metrics
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("<small>Total Devices</small>", unsafe_allow_html=True)
+        st.markdown(f"### {total_devices}", unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("<small>Active Devices</small>", unsafe_allow_html=True)
+        st.markdown(f"### {active_devices}", unsafe_allow_html=True)
+        active_percentage = (active_devices / total_devices * 100) if total_devices > 0 else 0
+        color = "green" if active_percentage >= 60 else "orange" if active_percentage >= 40 else "red"
+        st.markdown(f"<small>:{color}[{active_percentage:.1f}% of total devices]</small>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Action Button
+    if st.button("➕ Add New Device", type="primary"):
+        st.info("Add device functionality will be implemented in future release.")
+    
+    # Search Box
+    search_query = st.text_input("🔍 Search by Device ID", placeholder="Enter device ID...")
+    
+    # Filter devices based on search
+    if search_query:
+        filtered_df = devices_df[devices_df['DEVICE_ID'].str.contains(search_query, case=False, na=False)]
+    else:
+        filtered_df = devices_df
+    
+    # Add Edit buttons column
+    filtered_df_display = filtered_df.copy()
+    
+    # Display device table
+    st.markdown("**Device List**")
+    
+    # Table header
+    header_cols = st.columns([3, 3, 2, 3, 1])
+    with header_cols[0]:
+        st.markdown("**Device ID**")
+    with header_cols[1]:
+        st.markdown("**Last Active**")
+    with header_cols[2]:
+        st.markdown("**Status**")
+    with header_cols[3]:
+        st.markdown("**Location**")
+    with header_cols[4]:
+        st.markdown("**Actions**")
+    
+    st.markdown("---")
+    
+    # Create columns for table and edit buttons
+    for idx, row in filtered_df_display.iterrows():
+        cols = st.columns([3, 3, 2, 3, 1])
+        
+        with cols[0]:
+            st.text(row['DEVICE_ID'])
+        with cols[1]:
+            st.text(row['LAST_ACTIVE'])
+        with cols[2]:
+            status_color = "🟢" if row['STATUS'] == "Active" else "🔴"
+            st.text(f"{status_color} {row['STATUS']}")
+        with cols[3]:
+            st.text(row['LOCATION'])
+        with cols[4]:
+            if st.button("✏️", key=f"edit_{row['DEVICE_ID']}"):
+                st.info(f"Edit functionality for {row['DEVICE_ID']} will be implemented in future release.")
