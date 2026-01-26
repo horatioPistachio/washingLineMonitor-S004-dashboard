@@ -277,6 +277,38 @@ def fetch_device_count():
     # Return 0 on failure
     return 0
 
+def create_device(device_id, configuration):
+    """
+    Create a new device via the API
+    Returns tuple: (success: bool, message: str, status_code: int)
+    """
+    import os
+    
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    url = f"{endpoint}/api/v1/devices"
+    
+    try:
+        payload = {
+            "device_id": device_id,
+            "configuration": configuration
+        }
+        
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 201:
+            return (True, f"Device '{device_id}' created successfully!", 201)
+        elif response.status_code == 409:
+            return (False, f"Device '{device_id}' already exists.", 409)
+        elif response.status_code == 400:
+            return (False, "Invalid request format. Please check your inputs.", 400)
+        else:
+            return (False, f"Unexpected error: Status code {response.status_code}", response.status_code)
+    
+    except requests.exceptions.RequestException as e:
+        return (False, f"Network error: {str(e)}", 0)
+    except Exception as e:
+        return (False, f"Error creating device: {str(e)}", 0)
+
 def fetch_device_list():
     """
     Fetch device list from API with complete information
@@ -506,9 +538,79 @@ elif menu_selection == "Devices":
     
     st.markdown("---")
     
-    # Action Button
+    # Action Button and Form
+    if 'show_add_form' not in st.session_state:
+        st.session_state.show_add_form = False
+    
     if st.button("➕ Add New Device", type="primary"):
-        st.info("Add device functionality will be implemented in future release.")
+        st.session_state.show_add_form = not st.session_state.show_add_form
+    
+    # Add Device Form
+    if st.session_state.show_add_form:
+        with st.expander("Add New Device", expanded=True):
+            with st.form(key="add_device_form"):
+                new_device_id = st.text_input(
+                    "Device ID *",
+                    placeholder="e.g., device_001",
+                    help="Enter a unique identifier for the device"
+                )
+                
+                new_config_json = st.text_area(
+                    "Configuration (JSON) *",
+                    placeholder='{"location": "Backyard", "sensor_type": "temperature"}',
+                    height=120,
+                    help="Enter device configuration as valid JSON"
+                )
+                
+                col_submit, col_cancel = st.columns([1, 1])
+                
+                with col_submit:
+                    submit_button = st.form_submit_button("Create Device", type="primary")
+                
+                with col_cancel:
+                    cancel_button = st.form_submit_button("Cancel")
+                
+                if cancel_button:
+                    st.session_state.show_add_form = False
+                    st.rerun()
+                
+                if submit_button:
+                    # Validation
+                    errors = []
+                    
+                    # Check if device ID is empty
+                    if not new_device_id or not new_device_id.strip():
+                        errors.append("Device ID is required")
+                    
+                    # Check if configuration is empty
+                    if not new_config_json or not new_config_json.strip():
+                        errors.append("Configuration is required")
+                    
+                    # Validate JSON
+                    config_dict = None
+                    if new_config_json and new_config_json.strip():
+                        try:
+                            import json
+                            config_dict = json.loads(new_config_json)
+                        except json.JSONDecodeError as e:
+                            errors.append(f"Invalid JSON: {str(e)}")
+                    
+                    # Display errors or create device
+                    if errors:
+                        for error in errors:
+                            st.error(error)
+                    else:
+                        # Create device via API
+                        with st.spinner("Creating device..."):
+                            success, message, status_code = create_device(new_device_id.strip(), config_dict)
+                        
+                        if success:
+                            st.success(message)
+                            st.session_state.show_add_form = False
+                            # Refresh device list
+                            st.rerun()
+                        else:
+                            st.error(message)
     
     # Search Box
     search_query = st.text_input("🔍 Search by Device ID", placeholder="Enter device ID...")
