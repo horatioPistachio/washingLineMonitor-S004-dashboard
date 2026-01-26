@@ -1,7 +1,7 @@
 services:
-  washingLineMonitor-S004-dashboard:
+  dashboard:
     build: .
-    container_name: washingLineMonitor-S004-dashboard
+    container_name: washing-line-dashboard
     ports:
       - "8501:8501"
     environment:

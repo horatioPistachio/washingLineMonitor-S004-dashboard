@@ -83,7 +83,7 @@ docker-compose up -d
 docker-compose up -d
 
 # View logs
-docker-compose logs -f washingLineMonitor-S004-dashboard
+docker-compose logs -f dashboard
 
 # Stop
 docker-compose down
