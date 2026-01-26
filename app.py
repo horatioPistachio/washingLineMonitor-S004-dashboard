@@ -423,6 +423,86 @@ def delete_device(device_id):
     except Exception as e:
         return (False, f"Error deleting device: {str(e)}", 0)
 
+def fetch_telemetry_data(device_id, start_time=None, end_time=None):
+    """
+    Fetch telemetry data for a device within a time range
+    
+    Args:
+        device_id: Device identifier
+        start_time: datetime object for range start (optional)
+        end_time: datetime object for range end (optional)
+    
+    Returns:
+        tuple: (success: bool, data: list, message: str)
+    """
+    import os
+    
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    url = f"{endpoint}/api/v1/telemetry/{device_id}"
+    
+    # Build query parameters
+    params = {}
+    if start_time:
+        params['start_time'] = start_time.strftime("%Y-%m-%dT%H:%M:%S")
+    if end_time:
+        params['end_time'] = end_time.strftime("%Y-%m-%dT%H:%M:%S")
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return (True, data, "Data retrieved successfully")
+        elif response.status_code == 404:
+            return (False, [], f"Device '{device_id}' not found")
+        else:
+            return (False, [], f"Error: Status code {response.status_code}")
+    
+    except requests.exceptions.RequestException as e:
+        return (False, [], f"Network error: {str(e)}")
+    except Exception as e:
+        return (False, [], f"Error: {str(e)}")
+
+def process_telemetry_data(telemetry_records):
+    """
+    Process telemetry records into a DataFrame with local timestamps
+    
+    Returns:
+        DataFrame with columns: timestamp, metric1, metric2, ...
+    """
+    if not telemetry_records:
+        return pd.DataFrame()
+    
+    # Parse data
+    rows = []
+    for record in telemetry_records:
+        row = {}
+        
+        # Convert UTC timestamp to local time
+        timestamp_str = record['timestamp']
+        timestamp_utc = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        timestamp_local = timestamp_utc.astimezone()
+        row['timestamp'] = timestamp_local
+        
+        # Extract all payload metrics
+        payload = record.get('payload', {})
+        for key, value in payload.items():
+            row[key] = value
+        
+        rows.append(row)
+    
+    df = pd.DataFrame(rows)
+    
+    # Sort by timestamp
+    if not df.empty:
+        df = df.sort_values('timestamp')
+    
+    return df
+
+def convert_df_to_csv(df):
+    """Convert DataFrame to CSV for download"""
+    return df.to_csv(index=False).encode('utf-8')
+
 def fetch_device_list():
     """
     Fetch device list from API with complete information
@@ -525,24 +605,35 @@ def fetch_device_list():
 # SIDEBAR
 # ============================================================================
 
+# Check if viewing device page
+query_params = st.query_params
+viewing_device = query_params.get("page") == "device" and query_params.get("device_id")
+
 with st.sidebar:
     st.title("📡 IoT Fleet Manager")
-    st.markdown("**Device Management**")
-    st.markdown("---")
     
-    # Navigation menu
-  
-    menu_selection = st.radio(
-        "Navigation",
-        ["Dashboard", "Devices"],
-        index=0,
-        label_visibility="collapsed"
-    )
+    if viewing_device:
+        st.markdown("**Viewing Device Details**")
+        if st.button("← Back to Dashboard"):
+            st.query_params.clear()
+            st.rerun()
+    else:
+        st.markdown("**Device Management**")
+        st.markdown("---")
+        
+        # Navigation menu
+      
+        menu_selection = st.radio(
+            "Navigation",
+            ["Dashboard", "Devices"],
+            index=0,
+            label_visibility="collapsed"
+        )
     
     st.markdown("---")
     
     # Total devices display
-    device_count = fetch_device_count()  # API call placeholder
+    device_count = fetch_device_count()
     st.markdown(f"### Total Devices")
     st.markdown(f"# {device_count}")
 
@@ -550,7 +641,106 @@ with st.sidebar:
 # MAIN CONTENT
 # ============================================================================
 
-if menu_selection == "Dashboard":
+# Check if viewing device page
+if viewing_device:
+    device_id = query_params.get("device_id")
+    
+    # Device page header
+    st.markdown(f"### Device {device_id}")
+    
+    # Fetch device config for location
+    success, config, message = fetch_device_config(device_id)
+    location = config.get('location', 'Unknown') if success else 'Unknown'
+    
+    # Time range options
+    time_ranges = {
+        "Last 1 Hour": timedelta(hours=1),
+        "Last 6 Hours": timedelta(hours=6),
+        "Last 12 Hours": timedelta(hours=12),
+        "Last 24 Hours": timedelta(hours=24),
+        "Last 7 Days": timedelta(days=7),
+        "Last 30 Days": timedelta(days=30)
+    }
+    
+    selected_range = st.selectbox("Time Range", list(time_ranges.keys()), index=3)
+    time_delta = time_ranges[selected_range]
+    
+    # Calculate time range
+    end_time = datetime.now()
+    start_time = end_time - time_delta
+    
+    # Fetch telemetry data
+    with st.spinner("Loading telemetry data..."):
+        success, telemetry_data, message = fetch_telemetry_data(device_id, start_time, end_time)
+    
+    if not success:
+        st.error(message)
+        df = pd.DataFrame()
+    else:
+        df = process_telemetry_data(telemetry_data)
+    
+    # Header info in columns
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown("**Device ID**")
+        st.markdown(device_id)
+    
+    with col2:
+        st.markdown("**Location**")
+        st.markdown(location)
+    
+    with col3:
+        st.markdown("**Last Activity**")
+        if not df.empty:
+            last_activity = df['timestamp'].max()
+            st.markdown(last_activity.strftime("%Y-%m-%d %H:%M:%S"))
+        else:
+            st.markdown("--")
+    
+    with col4:
+        st.markdown("**Status**")
+        if not df.empty:
+            last_activity = df['timestamp'].max()
+            now = datetime.now(last_activity.tzinfo)
+            time_diff = now - last_activity
+            status = "🟢 Active" if time_diff <= timedelta(hours=1) else "🔴 Inactive"
+            st.markdown(status)
+        else:
+            st.markdown("--")
+    
+    st.markdown("---")
+    
+    # Download button
+    if not df.empty:
+        csv_data = convert_df_to_csv(df)
+        st.download_button(
+            label="📅 Download CSV",
+            data=csv_data,
+            file_name=f"{device_id}_telemetry_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            type="primary"
+        )
+    
+    st.markdown("---")
+    
+    # Plots section
+    if df.empty:
+        st.info("No telemetry data available for the selected time range.")
+    else:
+        st.markdown("**Telemetry Data**")
+        
+        metric_columns = [col for col in df.columns if col != 'timestamp']
+        
+        if not metric_columns:
+            st.warning("No metrics found in telemetry data")
+        else:
+            for metric in metric_columns:
+                st.markdown(f"#### {metric.replace('_', ' ').title()}")
+                plot_df = df[['timestamp', metric]].copy().set_index('timestamp')
+                st.line_chart(plot_df, use_container_width=True)
+
+elif menu_selection == "Dashboard":
     # Weather Header
     weather_data = fetch_weather_data()  # API call placeholder
 
@@ -750,7 +940,7 @@ elif menu_selection == "Devices":
     st.markdown("**Device List**")
     
     # Table header
-    header_cols = st.columns([3, 3, 2, 3, 1])
+    header_cols = st.columns([3, 3, 2, 3, 1, 1])
     with header_cols[0]:
         st.markdown("**Device ID**")
     with header_cols[1]:
@@ -760,7 +950,9 @@ elif menu_selection == "Devices":
     with header_cols[3]:
         st.markdown("**Location**")
     with header_cols[4]:
-        st.markdown("**Actions**")
+        st.markdown("**View**")
+    with header_cols[5]:
+        st.markdown("**Edit**")
     
     st.markdown("---")
     
@@ -772,7 +964,7 @@ elif menu_selection == "Devices":
     for idx, row in filtered_df_display.iterrows():
         device_id = row['DEVICE_ID']
         
-        cols = st.columns([3, 3, 2, 3, 1])
+        cols = st.columns([3, 3, 2, 3, 1, 1])
         
         with cols[0]:
             st.text(device_id)
@@ -784,6 +976,10 @@ elif menu_selection == "Devices":
         with cols[3]:
             st.text(row['LOCATION'])
         with cols[4]:
+            if st.button("📊", key=f"view_{device_id}"):
+                st.query_params.update(page="device", device_id=device_id)
+                st.rerun()
+        with cols[5]:
             if st.button("✏️", key=f"edit_{device_id}"):
                 st.session_state.editing_device_id = device_id
                 st.rerun()
