@@ -309,6 +309,90 @@ def create_device(device_id, configuration):
     except Exception as e:
         return (False, f"Error creating device: {str(e)}", 0)
 
+def fetch_device_config(device_id):
+    """
+    Fetch device configuration from API
+    Returns tuple: (success: bool, configuration: dict, message: str)
+    """
+    import os
+    
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    url = f"{endpoint}/api/v1/devices/{device_id}"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            configuration = data.get('configuration', {})
+            return (True, configuration, "Configuration retrieved successfully")
+        elif response.status_code == 404:
+            return (False, {}, f"Device '{device_id}' not found.")
+        else:
+            return (False, {}, f"Unexpected error: Status code {response.status_code}")
+    
+    except requests.exceptions.RequestException as e:
+        return (False, {}, f"Network error: {str(e)}")
+    except Exception as e:
+        return (False, {}, f"Error fetching configuration: {str(e)}")
+
+def update_device_config(device_id, configuration):
+    """
+    Update device configuration via the API
+    Returns tuple: (success: bool, message: str, status_code: int)
+    """
+    import os
+    
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    url = f"{endpoint}/api/v1/devices/{device_id}"
+    
+    try:
+        payload = {
+            "device_id": device_id,
+            "configuration": configuration
+        }
+        
+        response = requests.patch(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            return (True, f"Device '{device_id}' updated successfully!", 200)
+        elif response.status_code == 404:
+            return (False, f"Device '{device_id}' not found.", 404)
+        elif response.status_code == 400:
+            return (False, "Invalid request format. Please check your inputs.", 400)
+        else:
+            return (False, f"Unexpected error: Status code {response.status_code}", response.status_code)
+    
+    except requests.exceptions.RequestException as e:
+        return (False, f"Network error: {str(e)}", 0)
+    except Exception as e:
+        return (False, f"Error updating device: {str(e)}", 0)
+
+def delete_device(device_id):
+    """
+    Delete a device via the API
+    Returns tuple: (success: bool, message: str, status_code: int)
+    """
+    import os
+    
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    url = f"{endpoint}/api/v1/devices/{device_id}"
+    
+    try:
+        response = requests.delete(url, timeout=10)
+        
+        if response.status_code == 204:
+            return (True, f"Device '{device_id}' deleted successfully!", 204)
+        elif response.status_code == 404:
+            return (False, f"Device '{device_id}' not found.", 404)
+        else:
+            return (False, f"Unexpected error: Status code {response.status_code}", response.status_code)
+    
+    except requests.exceptions.RequestException as e:
+        return (False, f"Network error: {str(e)}", 0)
+    except Exception as e:
+        return (False, f"Error deleting device: {str(e)}", 0)
+
 def fetch_device_list():
     """
     Fetch device list from API with complete information
@@ -642,12 +726,18 @@ elif menu_selection == "Devices":
     
     st.markdown("---")
     
+    # Initialize session state for editing
+    if 'editing_device_id' not in st.session_state:
+        st.session_state.editing_device_id = None
+    
     # Create columns for table and edit buttons
     for idx, row in filtered_df_display.iterrows():
+        device_id = row['DEVICE_ID']
+        
         cols = st.columns([3, 3, 2, 3, 1])
         
         with cols[0]:
-            st.text(row['DEVICE_ID'])
+            st.text(device_id)
         with cols[1]:
             st.text(row['LAST_ACTIVE'])
         with cols[2]:
@@ -656,5 +746,109 @@ elif menu_selection == "Devices":
         with cols[3]:
             st.text(row['LOCATION'])
         with cols[4]:
-            if st.button("✏️", key=f"edit_{row['DEVICE_ID']}"):
-                st.info(f"Edit functionality for {row['DEVICE_ID']} will be implemented in future release.")
+            if st.button("✏️", key=f"edit_{device_id}"):
+                st.session_state.editing_device_id = device_id
+                st.rerun()
+        
+        # Show edit form if this device is being edited
+        if st.session_state.editing_device_id == device_id:
+            with st.expander("Edit Device Configuration", expanded=True):
+                # Fetch current configuration
+                success, config, message = fetch_device_config(device_id)
+                
+                if not success:
+                    st.error(message)
+                else:
+                    import json
+                    formatted_config = json.dumps(config, indent=2)
+                    
+                    with st.form(key=f"edit_form_{device_id}"):
+                        st.text_input("Device ID", value=device_id, disabled=True)
+                        
+                        config_text = st.text_area(
+                            "Configuration (JSON) *",
+                            value=formatted_config,
+                            height=150,
+                            help="Edit device configuration as valid JSON"
+                        )
+                        
+                        col_submit, col_cancel = st.columns([1, 1])
+                        
+                        with col_submit:
+                            submit_button = st.form_submit_button("Save Changes", type="primary")
+                        
+                        with col_cancel:
+                            cancel_button = st.form_submit_button("Cancel")
+                        
+                        if cancel_button:
+                            st.session_state.editing_device_id = None
+                            st.rerun()
+                        
+                        if submit_button:
+                            # Validation
+                            errors = []
+                            
+                            # Check if configuration is empty
+                            if not config_text or not config_text.strip():
+                                errors.append("Configuration is required")
+                            
+                            # Validate JSON
+                            config_dict = None
+                            if config_text and config_text.strip():
+                                try:
+                                    config_dict = json.loads(config_text)
+                                except json.JSONDecodeError as e:
+                                    errors.append(f"Invalid JSON: {str(e)}")
+                            
+                            # Display errors or update device
+                            if errors:
+                                for error in errors:
+                                    st.error(error)
+                            else:
+                                # Update device via API
+                                with st.spinner("Updating device..."):
+                                    success, message, status_code = update_device_config(device_id, config_dict)
+                                
+                                if success:
+                                    st.success(message)
+                                    st.session_state.editing_device_id = None
+                                    # Refresh device list
+                                    st.rerun()
+                                else:
+                                    st.error(message)
+                    
+                    # Delete button outside form
+                    st.markdown("---")
+                    
+                    # Delete modal function
+                    @st.dialog("Delete Device")
+                    def delete_device_modal(device_id):
+                        st.warning("⚠️ Are you sure you want to delete this device?")
+                        st.markdown(f"**Device ID:** `{device_id}`")
+                        st.markdown("This action **cannot be undone**.")
+                        
+                        col1, col2 = st.columns([1, 1])
+                        
+                        with col1:
+                            if st.button("🗑️ Delete", key=f"modal_confirm_{device_id}", type="primary"):
+                                # Execute delete
+                                with st.spinner("Deleting device..."):
+                                    success, message, status_code = delete_device(device_id)
+                                
+                                if success:
+                                    st.success(message)
+                                    st.session_state.editing_device_id = None
+                                    # Wait a moment for user to see success message
+                                    import time
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                else:
+                                    st.error(message)
+                        
+                        with col2:
+                            if st.button("Cancel", key=f"modal_cancel_{device_id}"):
+                                st.rerun()
+                    
+                    # Delete button to open modal
+                    if st.button("🗑️ Delete Device", key=f"delete_{device_id}"):
+                        delete_device_modal(device_id)
