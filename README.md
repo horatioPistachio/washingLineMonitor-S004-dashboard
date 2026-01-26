@@ -54,11 +54,45 @@ Required environment variables:
 
 ### Running the Dashboard
 
+**Local Development:**
 ```bash
 streamlit run app.py
 ```
 
 The dashboard will be available at `http://localhost:8501`
+
+**Docker Deployment:**
+
+1. Ensure the backend services (S003-webserver) are running:
+```bash
+cd washingLineMonitor-S003-webserver
+docker-compose up -d
+```
+
+2. Start the dashboard:
+```bash
+cd washingLineMonitor-S004-dashboard
+docker-compose up -d
+```
+
+3. Access the dashboard at `http://localhost:8501`
+
+**Docker Commands:**
+```bash
+# Build and start
+docker-compose up -d
+
+# View logs
+docker-compose logs -f washingLineMonitor-S004-dashboard
+
+# Stop
+docker-compose down
+
+# Rebuild after code changes
+docker-compose up -d --build
+```
+
+**Note:** The dashboard connects to backend services via Docker network. Both docker-compose files must be running for full functionality.
 
 ## API Integration
 

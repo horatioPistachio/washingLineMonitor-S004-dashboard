@@ -1,0 +1,37 @@
+services:
+  washingLineMonitor-S004-dashboard:
+    build: .
+    container_name: washingLineMonitor-S004-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      # Backend API endpoint - connects to S003 webserver
+      API_ENDPOINT: http://app:8000
+      # Notifications topic
+      NTFY_TOPIC: ${NTFY_TOPIC:-washingLineMonitor}
+      # Glances endpoint - connects to S003 glances service
+      GLANCES_ENDPOINT: http://glances:61208
+    networks:
+      - washing-line-network
+    restart: unless-stopped
+    depends_on:
+      - dummy  # Placeholder to ensure network is created
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Dummy service to ensure network compatibility
+  # Remove this if you merge into the S003 docker-compose.yaml
+  dummy:
+    image: alpine:latest
+    command: "true"
+    networks:
+      - washing-line-network
+
+networks:
+  washing-line-network:
+    external: true
+    name: washinglinemonitor-s003-webserver_default
