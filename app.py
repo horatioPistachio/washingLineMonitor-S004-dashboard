@@ -870,7 +870,7 @@ elif menu_selection == "Devices":
     
     # Device Summary Metrics
     total_devices = len(devices_df)
-    active_devices = len(devices_df[devices_df['STATUS'] == 'Active'])
+    active_devices = len(devices_df[devices_df['STATUS'] == 'Active']) if not devices_df.empty else 0
     
     # Create 2 columns for summary metrics
     col1, col2 = st.columns(2)
