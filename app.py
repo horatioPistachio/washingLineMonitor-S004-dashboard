@@ -98,10 +98,11 @@ st.markdown("""
 # API INTEGRATION FUNCTIONS (TO BE IMPLEMENTED)
 # ============================================================================
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def fetch_weather_data():
     """
     Fetch weather data from API
-    TODO: Implement API call to weather service
+    Cached for 5 minutes to reduce API calls
     """
 
     url = "https://api.open-meteo.com/v1/forecast"
@@ -159,10 +160,12 @@ def fetch_weather_data():
         "location": "Banya"
     }
 
+@st.cache_data(ttl=60)  # Cache for 60 seconds
 def fetch_notifications():
     """
     Fetch recent notifications from ntfy.sh API
     Returns a DataFrame with TIMESTAMP, TITLE, MESSAGE, DEVICE ID columns
+    Cached for 60 seconds to reduce API calls
     """
     import os
     
@@ -225,10 +228,12 @@ def fetch_notifications():
         "DEVICE ID": []
     })
 
+@st.cache_data(ttl=10)  # Cache for 10 seconds
 def fetch_system_metrics():
     """
     Fetch real-time system metrics from Glances API
     Returns dict with disk, memory, and CPU metrics
+    Cached for 10 seconds to reduce API calls
     """
     import os
     
@@ -282,10 +287,12 @@ def fetch_system_metrics():
         "cpu": {"percentage": 0}
     }
 
+@st.cache_data(ttl=30)  # Cache for 30 seconds
 def fetch_device_count():
     """
     Fetch total device count from API
     Returns the number of registered devices
+    Cached for 30 seconds to reduce API calls
     """
     import os
     endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
@@ -339,10 +346,12 @@ def create_device(device_id, configuration):
     except Exception as e:
         return (False, f"Error creating device: {str(e)}", 0)
 
+@st.cache_data(ttl=60)  # Cache for 60 seconds
 def fetch_device_config(device_id):
     """
     Fetch device configuration from API
     Returns tuple: (success: bool, configuration: dict, message: str)
+    Cached for 60 seconds to reduce API calls
     """
     import os
     
@@ -423,6 +432,7 @@ def delete_device(device_id):
     except Exception as e:
         return (False, f"Error deleting device: {str(e)}", 0)
 
+@st.cache_data(ttl=30)  # Cache for 30 seconds
 def fetch_telemetry_data(device_id, start_time=None, end_time=None):
     """
     Fetch telemetry data for a device within a time range
@@ -434,6 +444,8 @@ def fetch_telemetry_data(device_id, start_time=None, end_time=None):
     
     Returns:
         tuple: (success: bool, data: list, message: str)
+    
+    Cached for 30 seconds to reduce API calls
     """
     import os
     
@@ -503,11 +515,13 @@ def convert_df_to_csv(df):
     """Convert DataFrame to CSV for download"""
     return df.to_csv(index=False).encode('utf-8')
 
+@st.cache_data(ttl=30)  # Cache for 30 seconds
 def fetch_device_list():
     """
     Fetch device list from API with complete information
     Combines data from /devices, /devices/{id}, and /telemetry/{id} endpoints
     Returns a DataFrame with DEVICE_ID, LOCATION, LAST_ACTIVE, STATUS columns
+    Cached for 30 seconds to reduce API calls
     """
     import os
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -646,7 +660,13 @@ if viewing_device:
     device_id = query_params.get("device_id")
     
     # Device page header
-    st.markdown(f"### Device {device_id}")
+    col_title, col_refresh = st.columns([6, 1])
+    with col_title:
+        st.markdown(f"### Device {device_id}")
+    with col_refresh:
+        if st.button("🔄 Refresh", key="refresh_device_detail"):
+            st.cache_data.clear()
+            st.rerun()
     
     # Fetch device config for location
     success, config, message = fetch_device_config(device_id)
@@ -741,8 +761,19 @@ if viewing_device:
                 st.line_chart(plot_df, use_container_width=True)
 
 elif menu_selection == "Dashboard":
+    # Refresh button
+    col_title, col_refresh = st.columns([6, 1])
+    with col_title:
+        st.markdown("### Dashboard")
+    with col_refresh:
+        if st.button("🔄 Refresh", key="refresh_dashboard"):
+            st.cache_data.clear()
+            st.rerun()
+    
+    st.markdown("---")
+    
     # Weather Header
-    weather_data = fetch_weather_data()  # API call placeholder
+    weather_data = fetch_weather_data()
 
     st.markdown(f"""
         <div class="weather-header">
@@ -824,7 +855,14 @@ elif menu_selection == "Dashboard":
 
 elif menu_selection == "Devices":
     # Device Management Page
-    st.markdown("### Device Management")
+    col_title, col_refresh = st.columns([6, 1])
+    with col_title:
+        st.markdown("### Device Management")
+    with col_refresh:
+        if st.button("🔄 Refresh", key="refresh_devices"):
+            st.cache_data.clear()
+            st.rerun()
+    
     st.markdown("---")
     
     # Fetch device data
