@@ -867,7 +867,6 @@ elif menu_selection == "Devices":
     
     # Fetch device data
     devices_df = fetch_device_list()  # API call placeholder
-    print(f"Devices DataFrame:\n{devices_df}")
     if not devices_df.empty and 'STATUS' in devices_df.columns:
         # Device Summary Metrics
         total_devices = len(devices_df)
