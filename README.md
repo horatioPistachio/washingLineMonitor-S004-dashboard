@@ -7,7 +7,7 @@ Dashboard for the washing line monitor. Links with backend in washingLineMonitor
 - **Real-time Weather Display**: Shows current weather conditions including temperature, humidity, wind speed, and precipitation
 - **Device Management**: View and manage all IoT devices with their status, location, and last activity
 - **Notifications**: Monitor system alerts and device notifications from ntfy.sh
-- **System Metrics**: Track database usage, data rates, and request performance
+- **System Metrics**: Real-time system statistics from Glances (CPU, memory, disk usage)
 
 ## Setup
 
@@ -50,6 +50,7 @@ cp .env.example .env
 Required environment variables:
 - `API_ENDPOINT`: Base URL for the washing line monitor API (default: http://washinglinemonitor-s003-webserver-app)
 - `NTFY_TOPIC`: ntfy.sh topic for notifications (default: washingLineMonitor)
+- `GLANCES_ENDPOINT`: Glances API endpoint for system statistics (default: http://localhost:61208)
 
 ### Running the Dashboard
 
@@ -71,6 +72,9 @@ The dashboard integrates with the following API endpoints:
 ### Notifications
 - `GET https://ntfy.sh/{topic}/json?poll=1&since=24h` - Fetch notifications
 
+### System Statistics
+- `GET http://localhost:61208/api/3/all` - Glances API for system metrics (CPU, memory, disk)
+
 ## Backend Functions
 
 ### `fetch_notifications()`
@@ -87,6 +91,14 @@ Fetches complete device information including:
 - Status (Active/Inactive based on last activity within 1 hour)
 
 This function makes concurrent requests to optimize performance when fetching data for multiple devices.
+
+### `fetch_system_metrics()`
+Fetches real-time system statistics from Glances API. Returns metrics for:
+- Disk space usage (percentage and total GB)
+- Memory usage (percentage and total GB)
+- CPU load (percentage)
+
+Returns default values (zeros) if Glances service is unavailable.
 
 ## Project Structure
 
@@ -124,6 +136,12 @@ The dashboard is built with Streamlit and uses:
 - Ensure devices have sent telemetry data recently
 - Check that device configurations include location information
 - Verify the telemetry endpoint is returning data
+
+### System Statistics Show "--"
+- Verify Glances service is running on port 61208
+- Check that `GLANCES_ENDPOINT` environment variable is correct
+- Test the Glances API directly at http://localhost:61208/api/3/all
+- Ensure no firewall is blocking access to Glances
 
 ## License
 

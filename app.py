@@ -227,29 +227,59 @@ def fetch_notifications():
 
 def fetch_system_metrics():
     """
-    Fetch system state metrics from API
-    TODO: Implement API call to metrics service
+    Fetch real-time system metrics from Glances API
+    Returns dict with disk, memory, and CPU metrics
     """
-    # Placeholder data
+    import os
+    
+    endpoint = os.environ.get('GLANCES_ENDPOINT', 'http://localhost:61208')
+    url = f"{endpoint}/api/4/all"
+    
+    try:
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Extract disk metrics (first filesystem)
+            fs_list = data.get('fs', [])
+            disk_info = fs_list[0] if fs_list else {}
+            disk_size_gb = disk_info.get('size', 0) / (1024**3)
+            disk_percent = disk_info.get('percent', 0)
+            
+            # Extract memory metrics
+            mem = data.get('mem', {})
+            mem_total_gb = mem.get('total', 0) / (1024**3)
+            mem_percent = mem.get('percent', 0)
+            
+            # Extract CPU metrics
+            cpu = data.get('cpu', {})
+            cpu_percent = cpu.get('total', 0)
+            
+            return {
+                "disk": {
+                    "percentage": disk_percent,
+                    "total_gb": disk_size_gb
+                },
+                "memory": {
+                    "percentage": mem_percent,
+                    "total_gb": mem_total_gb
+                },
+                "cpu": {
+                    "percentage": cpu_percent
+                }
+            }
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching Glances data: {e}")
+    except Exception as e:
+        print(f"Error processing Glances data: {e}")
+    
+    # Return default values on failure
     return {
-        "db_space_usage": {
-            "percentage": 67,
-            "total_gb": 500,
-            "change_from_avg": -8,
-            "change_type": "decrease"
-        },
-        "device_data_rate": {
-            "value": 2.4,
-            "unit": "MB/s",
-            "change_from_avg": 8,
-            "change_type": "increase"
-        },
-        "avg_request_time": {
-            "value": 124,
-            "unit": "ms",
-            "change_from_last_week": -12,
-            "change_type": "decrease"
-        }
+        "disk": {"percentage": 0, "total_gb": 0},
+        "memory": {"percentage": 0, "total_gb": 0},
+        "cpu": {"percentage": 0}
     }
 
 def fetch_device_count():
@@ -557,42 +587,50 @@ if menu_selection == "Dashboard":
     # System State Section
     st.markdown("**System State**")
 
-    # Fetch metrics data
-    metrics = fetch_system_metrics()  # API call placeholder
+    # Fetch metrics data from Glances
+    metrics = fetch_system_metrics()
 
     # Create 3 columns for metrics
     col1, col2, col3 = st.columns(3)
 
-    # Metric 1: DB Space Usage
+    # Metric 1: Disk Space Usage
     with col1:
-        st.markdown("<small>DB Space Usage</small>", unsafe_allow_html=True)
-        db_metrics = metrics["db_space_usage"]
-        st.markdown(f"### {db_metrics['percentage']}% <small>of {db_metrics['total_gb']} GB</small>", unsafe_allow_html=True)
-        st.progress(db_metrics['percentage'] / 100)
-        
-        change_color = "green" if db_metrics['change_type'] == "decrease" else "red"
-        change_arrow = "↓" if db_metrics['change_type'] == "decrease" else "↑"
-        st.markdown(f"<small>:{change_color}[{change_arrow} {abs(db_metrics['change_from_avg'])}% from average]</small>", unsafe_allow_html=True)
+        st.markdown("<small>Disk Space Usage</small>", unsafe_allow_html=True)
+        disk = metrics["disk"]
+        if disk["total_gb"] > 0:
+            st.markdown(f"### {disk['percentage']:.1f}% <small>of {disk['total_gb']:.0f} GB</small>", unsafe_allow_html=True)
+            st.progress(disk['percentage'] / 100)
+        else:
+            st.markdown("### --")
+            st.markdown("<small>:orange[Glances unavailable]</small>", unsafe_allow_html=True)
 
-    # Metric 2: Device Data Rate
+    # Metric 2: Memory Usage
     with col2:
-        st.markdown("<small>Device Data Rate</small>", unsafe_allow_html=True)
-        rate_metrics = metrics["device_data_rate"]
-        st.markdown(f"### {rate_metrics['value']} {rate_metrics['unit']}", unsafe_allow_html=True)
-        
-        change_color = "green" if rate_metrics['change_type'] == "increase" else "red"
-        change_arrow = "↑" if rate_metrics['change_type'] == "increase" else "↓"
-        st.markdown(f"<small>:{change_color}[{change_arrow} {abs(rate_metrics['change_from_avg'])}% from average]</small>", unsafe_allow_html=True)
+        st.markdown("<small>Memory Usage</small>", unsafe_allow_html=True)
+        mem = metrics["memory"]
+        if mem["total_gb"] > 0:
+            st.markdown(f"### {mem['percentage']:.1f}% <small>of {mem['total_gb']:.1f} GB</small>", unsafe_allow_html=True)
+            st.progress(mem['percentage'] / 100)
+        else:
+            st.markdown("### --")
+            st.markdown("<small>:orange[Glances unavailable]</small>", unsafe_allow_html=True)
 
-    # Metric 3: Average Request Time
+    # Metric 3: CPU Load
     with col3:
-        st.markdown("<small>Average Request Time</small>", unsafe_allow_html=True)
-        time_metrics = metrics["avg_request_time"]
-        st.markdown(f"### {time_metrics['value']} {time_metrics['unit']}", unsafe_allow_html=True)
-        
-        change_color = "green" if time_metrics['change_type'] == "decrease" else "red"
-        change_arrow = "↓" if time_metrics['change_type'] == "decrease" else "↑"
-        st.markdown(f"<small>:{change_color}[{change_arrow} {abs(time_metrics['change_from_last_week'])}ms from last week]</small>", unsafe_allow_html=True)
+        st.markdown("<small>CPU Load</small>", unsafe_allow_html=True)
+        cpu = metrics["cpu"]
+        if cpu["percentage"] > 0:
+            st.markdown(f"### {cpu['percentage']:.1f}%", unsafe_allow_html=True)
+            # Color coding based on load
+            color = "green" if cpu["percentage"] < 60 else "orange" if cpu["percentage"] < 80 else "red"
+            st.markdown(f"<small>:{color}[Current load]</small>", unsafe_allow_html=True)
+        else:
+            st.markdown("### --")
+            st.markdown("<small>:orange[Glances unavailable]</small>", unsafe_allow_html=True)
+    
+    # Link to Glances web interface
+    glances_url = os.environ.get('GLANCES_ENDPOINT', 'http://localhost:61208')
+    st.markdown(f"[📊 View Detailed System Stats]({glances_url})")
 
 elif menu_selection == "Devices":
     # Device Management Page
