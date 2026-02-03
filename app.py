@@ -757,7 +757,7 @@ if viewing_device:
         else:
             for metric in metric_columns:
                 st.markdown(f"#### {metric.replace('_', ' ').title()}")
-                plot_df = df[['timestamp', metric]].copy().set_index('timestamp')
+                plot_df = df[['timestamp', metric]].copy().dropna(subset=[metric]).set_index('timestamp')
                 st.line_chart(plot_df, use_container_width=True)
 
 elif menu_selection == "Dashboard":
