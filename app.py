@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import requests
 import os
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -321,6 +322,9 @@ def create_device(device_id, configuration):
     """
     import os
     
+    # Strip whitespace from device_id to prevent API errors
+    device_id = device_id.strip() if isinstance(device_id, str) else device_id
+    
     endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
     url = f"{endpoint}/api/v1/devices"
     
@@ -355,6 +359,9 @@ def fetch_device_config(device_id):
     """
     import os
     
+    # Strip whitespace from device_id to prevent API errors
+    device_id = device_id.strip() if isinstance(device_id, str) else device_id
+    
     endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
     url = f"{endpoint}/api/v1/devices/{device_id}"
     
@@ -381,6 +388,9 @@ def update_device_config(device_id, configuration):
     Returns tuple: (success: bool, message: str, status_code: int)
     """
     import os
+    
+    # Strip whitespace from device_id to prevent API errors
+    device_id = device_id.strip() if isinstance(device_id, str) else device_id
     
     endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
     url = f"{endpoint}/api/v1/devices/{device_id}"
@@ -413,6 +423,9 @@ def delete_device(device_id):
     Returns tuple: (success: bool, message: str, status_code: int)
     """
     import os
+    
+    # Strip whitespace from device_id to prevent API errors
+    device_id = device_id.strip() if isinstance(device_id, str) else device_id
     
     endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
     url = f"{endpoint}/api/v1/devices/{device_id}"
@@ -449,6 +462,9 @@ def fetch_telemetry_data(device_id, start_time=None, end_time=None):
     """
     import os
     
+    # Strip whitespace from device_id to prevent API errors
+    device_id = device_id.strip() if isinstance(device_id, str) else device_id
+    
     endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
     url = f"{endpoint}/api/v1/telemetry/{device_id}"
     
@@ -475,6 +491,88 @@ def fetch_telemetry_data(device_id, start_time=None, end_time=None):
     except Exception as e:
         return (False, [], f"Error: {str(e)}")
 
+@st.cache_data(ttl=30)  # Cache for 30 seconds
+def fetch_device_completion_time(device_id):
+    """
+    Fetch completion timestamp for a device.
+
+    Returns:
+        str | None: RFC3339 timestamp string when available, otherwise None.
+    """
+    import os
+
+    device_id = device_id.strip() if isinstance(device_id, str) else device_id
+
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    url = f"{endpoint}/api/v1/devices/{device_id}/completion_time"
+
+    try:
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 200:
+            # Accept common payload shapes: JSON string, JSON object, or plain text.
+            content_type = response.headers.get('content-type', '').lower()
+
+            if 'application/json' in content_type:
+                data = response.json()
+
+                if isinstance(data, str):
+                    value = data.strip().strip('"')
+                    return value or None
+
+                if isinstance(data, dict):
+                    value = data.get('completion_time') or data.get('timestamp')
+                    if isinstance(value, str):
+                        value = value.strip().strip('"')
+                    return value or None
+
+                return None
+
+            # Non-JSON body fallback (e.g., text/plain with RFC3339 timestamp)
+            value = response.text.strip().strip('"')
+            return value or None
+
+        if response.status_code == 404:
+            return None
+
+        print(f"Error fetching completion time for {device_id}: status {response.status_code}")
+        return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Network error fetching completion time for {device_id}: {e}")
+        return None
+    except Exception as e:
+        print(f"Error processing completion time for {device_id}: {e}")
+        return None
+
+def format_completion_time_for_user(completion_time):
+    """
+    Convert an RFC3339 timestamp string to the user's timezone.
+
+    Returns:
+        str | None: Formatted local datetime string, or None if invalid.
+    """
+    if not completion_time or not isinstance(completion_time, str):
+        return None
+
+    try:
+        # Handle both trailing Z and explicit offsets.
+        parsed = datetime.fromisoformat(completion_time.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo('UTC'))
+
+        user_timezone = getattr(st.context, 'timezone', None)
+
+        if user_timezone:
+            local_dt = parsed.astimezone(ZoneInfo(user_timezone))
+        else:
+            local_dt = parsed.astimezone(datetime.now().astimezone().tzinfo)
+
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        print(f"Error formatting completion time '{completion_time}': {e}")
+        return None
+
 def process_telemetry_data(telemetry_records):
     """
     Process telemetry records into a DataFrame with local timestamps
@@ -490,11 +588,30 @@ def process_telemetry_data(telemetry_records):
     for record in telemetry_records:
         row = {}
         
-        # Convert UTC timestamp to local time
-        timestamp_str = record['timestamp']
-        timestamp_utc = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-        timestamp_local = timestamp_utc.astimezone()
-        row['timestamp'] = timestamp_local
+        # Normalize all timestamps to UTC first to avoid mixed-timezone errors
+        try:
+            timestamp_str = record.get('timestamp')
+            if timestamp_str:
+                parsed_ts = None
+
+                # Handle string timestamps from API
+                if isinstance(timestamp_str, str):
+                    parsed_ts = pd.to_datetime(timestamp_str, errors='coerce', utc=True)
+                else:
+                    # Handle datetime or other timestamp-like objects
+                    parsed_ts = pd.to_datetime(timestamp_str, errors='coerce', utc=True)
+
+                if pd.isna(parsed_ts):
+                    continue
+
+                # Convert to local timezone for display consistency in UI
+                row['timestamp'] = parsed_ts.tz_convert(datetime.now().astimezone().tzinfo)
+            else:
+                # Skip records with missing timestamps
+                continue
+        except (ValueError, AttributeError) as e:
+            print(f"Error parsing timestamp for record: {e}")
+            continue
         
         # Extract all payload metrics
         payload = record.get('payload', {})
@@ -503,11 +620,21 @@ def process_telemetry_data(telemetry_records):
         
         rows.append(row)
     
+    if not rows:
+        return pd.DataFrame()
+    
     df = pd.DataFrame(rows)
     
-    # Sort by timestamp
-    if not df.empty:
-        df = df.sort_values('timestamp')
+    # Ensure timestamp column is a consistent timezone-aware datetime dtype
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+        df['timestamp'] = df['timestamp'].dt.tz_convert(datetime.now().astimezone().tzinfo)
+        # Remove any rows with NaT (Not a Time) values
+        df = df.dropna(subset=['timestamp'])
+        
+        # Sort by timestamp
+        if not df.empty:
+            df = df.sort_values('timestamp')
     
     return df
 
@@ -593,7 +720,7 @@ def fetch_device_list():
         
         if response.status_code == 200:
             devices_list = response.json()
-            device_ids = [d.get('device_id') for d in devices_list if 'device_id' in d]
+            device_ids = [d.get('device_id', '').strip() for d in devices_list if 'device_id' in d]
             
             # Step 2: Fetch details for each device concurrently
             devices = []
@@ -692,6 +819,8 @@ if viewing_device:
     # Fetch telemetry data
     with st.spinner("Loading telemetry data..."):
         success, telemetry_data, message = fetch_telemetry_data(device_id, start_time, end_time)
+
+    completion_time = fetch_device_completion_time(device_id)
     
     if not success:
         st.error(message)
@@ -745,6 +874,12 @@ if viewing_device:
     st.markdown("---")
     
     # Plots section
+    if completion_time:
+        formatted_completion_time = format_completion_time_for_user(completion_time)
+        if formatted_completion_time:
+            st.markdown("**Completion Time**")
+            st.markdown(formatted_completion_time)
+
     if df.empty:
         st.info("No telemetry data available for the selected time range.")
     else:

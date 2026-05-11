@@ -14,8 +14,8 @@ services:
     networks:
       - washing-line-network
     restart: unless-stopped
-    depends_on:
-      - dummy  # Placeholder to ensure network is created
+    # depends_on:
+    #   - dummy  # Placeholder to ensure network is created
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
@@ -25,11 +25,11 @@ services:
 
   # Dummy service to ensure network compatibility
   # Remove this if you merge into the S003 docker-compose.yaml
-  dummy:
-    image: alpine:latest
-    command: "true"
-    networks:
-      - washing-line-network
+  # dummy:
+  #   image: alpine:latest
+  #   command: "true"
+  #   networks:
+  #     - washing-line-network
 
 networks:
   washing-line-network:
