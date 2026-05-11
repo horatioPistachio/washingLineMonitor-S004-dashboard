@@ -99,6 +99,59 @@ st.markdown("""
 # API INTEGRATION FUNCTIONS (TO BE IMPLEMENTED)
 # ============================================================================
 
+def get_timezone_info(user_timezone=None):
+    """
+    Resolve timezone name and tzinfo used for display.
+
+    Args:
+        user_timezone: IANA timezone string from browser context.
+
+    Returns:
+        tuple[str, tzinfo]: (timezone label, timezone info object)
+    """
+    fallback_tz = datetime.now().astimezone().tzinfo
+
+    if not user_timezone:
+        return ("Local", fallback_tz)
+
+    try:
+        return (user_timezone, ZoneInfo(user_timezone))
+    except Exception:
+        print(f"Invalid timezone '{user_timezone}', falling back to local timezone")
+        return ("Local", fallback_tz)
+
+def to_user_datetime(timestamp_value, user_timezone=None):
+    """
+    Convert a timestamp value (assumed UTC when naive) to user timezone.
+
+    Args:
+        timestamp_value: RFC3339 string, datetime, or pandas timestamp.
+        user_timezone: IANA timezone string from browser context.
+
+    Returns:
+        datetime | None: Timezone-aware datetime in user timezone.
+    """
+    if timestamp_value is None:
+        return None
+
+    try:
+        parsed = pd.to_datetime(timestamp_value, errors='coerce', utc=True)
+        if pd.isna(parsed):
+            return None
+
+        _, tzinfo = get_timezone_info(user_timezone)
+        return parsed.tz_convert(tzinfo).to_pydatetime()
+    except Exception as e:
+        print(f"Error converting timestamp '{timestamp_value}': {e}")
+        return None
+
+def format_timestamp_for_user(timestamp_value, user_timezone=None):
+    """Format a timestamp in the user's timezone for display."""
+    converted = to_user_datetime(timestamp_value, user_timezone)
+    if not converted:
+        return None
+    return converted.strftime("%Y-%m-%d %H:%M:%S")
+
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def fetch_weather_data():
     """
@@ -162,7 +215,7 @@ def fetch_weather_data():
     }
 
 @st.cache_data(ttl=60)  # Cache for 60 seconds
-def fetch_notifications():
+def fetch_notifications(user_timezone=None):
     """
     Fetch recent notifications from ntfy.sh API
     Returns a DataFrame with TIMESTAMP, TITLE, MESSAGE, DEVICE ID columns
@@ -200,8 +253,10 @@ def fetch_notifications():
                 
                 for notif in notifications:
                     # Convert Unix timestamp to readable format
-                    timestamp = datetime.fromtimestamp(notif.get('time', 0))
-                    df_data["TIMESTAMP"].append(timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+                    timestamp_seconds = notif.get('time', 0)
+                    timestamp_utc = pd.to_datetime(timestamp_seconds, unit='s', utc=True, errors='coerce')
+                    formatted_timestamp = format_timestamp_for_user(timestamp_utc, user_timezone) or "--"
+                    df_data["TIMESTAMP"].append(formatted_timestamp)
                     df_data["TITLE"].append(notif.get('title', 'N/A'))
                     df_data["MESSAGE"].append(notif.get('message', ''))
                     # Try to extract device ID from message if present
@@ -545,7 +600,7 @@ def fetch_device_completion_time(device_id):
         print(f"Error processing completion time for {device_id}: {e}")
         return None
 
-def format_completion_time_for_user(completion_time):
+def format_completion_time_for_user(completion_time, user_timezone=None):
     """
     Convert an RFC3339 timestamp string to the user's timezone.
 
@@ -556,24 +611,12 @@ def format_completion_time_for_user(completion_time):
         return None
 
     try:
-        # Handle both trailing Z and explicit offsets.
-        parsed = datetime.fromisoformat(completion_time.replace('Z', '+00:00'))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=ZoneInfo('UTC'))
-
-        user_timezone = getattr(st.context, 'timezone', None)
-
-        if user_timezone:
-            local_dt = parsed.astimezone(ZoneInfo(user_timezone))
-        else:
-            local_dt = parsed.astimezone(datetime.now().astimezone().tzinfo)
-
-        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+        return format_timestamp_for_user(completion_time, user_timezone)
     except Exception as e:
         print(f"Error formatting completion time '{completion_time}': {e}")
         return None
 
-def process_telemetry_data(telemetry_records):
+def process_telemetry_data(telemetry_records, user_timezone=None):
     """
     Process telemetry records into a DataFrame with local timestamps
     
@@ -604,8 +647,9 @@ def process_telemetry_data(telemetry_records):
                 if pd.isna(parsed_ts):
                     continue
 
-                # Convert to local timezone for display consistency in UI
-                row['timestamp'] = parsed_ts.tz_convert(datetime.now().astimezone().tzinfo)
+                # Convert to browser timezone for display consistency in UI
+                _, tzinfo = get_timezone_info(user_timezone)
+                row['timestamp'] = parsed_ts.tz_convert(tzinfo)
             else:
                 # Skip records with missing timestamps
                 continue
@@ -628,7 +672,8 @@ def process_telemetry_data(telemetry_records):
     # Ensure timestamp column is a consistent timezone-aware datetime dtype
     if 'timestamp' in df.columns:
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
-        df['timestamp'] = df['timestamp'].dt.tz_convert(datetime.now().astimezone().tzinfo)
+        _, tzinfo = get_timezone_info(user_timezone)
+        df['timestamp'] = df['timestamp'].dt.tz_convert(tzinfo)
         # Remove any rows with NaT (Not a Time) values
         df = df.dropna(subset=['timestamp'])
         
@@ -643,7 +688,7 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 @st.cache_data(ttl=30)  # Cache for 30 seconds
-def fetch_device_list():
+def fetch_device_list(user_timezone=None):
     """
     Fetch device list from API with complete information
     Combines data from /devices, /devices/{id}, and /telemetry/{id} endpoints
@@ -694,10 +739,14 @@ def fetch_device_list():
                         # Parse timestamp
                         try:
                             last_active_dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                            device_info["LAST_ACTIVE"] = last_active_dt.strftime("%Y-%m-%d %H:%M:%S")
+                            if last_active_dt.tzinfo is None:
+                                last_active_dt = last_active_dt.replace(tzinfo=ZoneInfo('UTC'))
+
+                            formatted_last_active = format_timestamp_for_user(last_active_dt, user_timezone)
+                            device_info["LAST_ACTIVE"] = formatted_last_active or "--"
                             
                             # Determine status based on last activity
-                            now = datetime.now(last_active_dt.tzinfo) if last_active_dt.tzinfo else datetime.now()
+                            now = datetime.now(last_active_dt.tzinfo)
                             time_diff = now - last_active_dt
                             
                             if time_diff <= timedelta(hours=1):
@@ -785,6 +834,7 @@ with st.sidebar:
 # Check if viewing device page
 if viewing_device:
     device_id = query_params.get("device_id")
+    user_timezone = getattr(st.context, 'timezone', None)
     
     # Device page header
     col_title, col_refresh = st.columns([6, 1])
@@ -826,7 +876,7 @@ if viewing_device:
         st.error(message)
         df = pd.DataFrame()
     else:
-        df = process_telemetry_data(telemetry_data)
+        df = process_telemetry_data(telemetry_data, user_timezone)
     
     # Header info in columns
     col1, col2, col3, col4 = st.columns(4)
@@ -875,7 +925,7 @@ if viewing_device:
     
     # Plots section
     if completion_time:
-        formatted_completion_time = format_completion_time_for_user(completion_time)
+        formatted_completion_time = format_completion_time_for_user(completion_time, user_timezone)
         if formatted_completion_time:
             st.markdown("**Completion Time**")
             st.markdown(formatted_completion_time)
@@ -896,6 +946,7 @@ if viewing_device:
                 st.line_chart(plot_df, use_container_width=True)
 
 elif menu_selection == "Dashboard":
+    user_timezone = getattr(st.context, 'timezone', None)
     # Refresh button
     col_title, col_refresh = st.columns([6, 1])
     with col_title:
@@ -932,7 +983,7 @@ elif menu_selection == "Dashboard":
 
     # Recent Notifications Section
     st.markdown("### Recent Notifications")
-    notifications_df = fetch_notifications()  # API call placeholder
+    notifications_df = fetch_notifications(user_timezone)  # API call placeholder
     st.dataframe(
         notifications_df,
         width='stretch',
@@ -989,6 +1040,7 @@ elif menu_selection == "Dashboard":
     st.markdown(f"[📊 View Detailed System Stats]({glances_url})")
 
 elif menu_selection == "Devices":
+    user_timezone = getattr(st.context, 'timezone', None)
     # Device Management Page
     col_title, col_refresh = st.columns([6, 1])
     with col_title:
@@ -1001,7 +1053,7 @@ elif menu_selection == "Devices":
     st.markdown("---")
     
     # Fetch device data
-    devices_df = fetch_device_list()  # API call placeholder
+    devices_df = fetch_device_list(user_timezone)  # API call placeholder
     if not devices_df.empty and 'STATUS' in devices_df.columns:
         # Device Summary Metrics
         total_devices = len(devices_df)
