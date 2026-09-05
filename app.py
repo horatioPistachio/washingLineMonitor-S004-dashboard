@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import json
 import requests
 import os
 from zoneinfo import ZoneInfo
@@ -152,18 +153,118 @@ def format_timestamp_for_user(timestamp_value, user_timezone=None):
         return None
     return converted.strftime("%Y-%m-%d %H:%M:%S")
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def fetch_weather_data():
+WEATHER_LOCATION_PATH = os.path.join("data", "weather_location.json")
+DEFAULT_WEATHER_LOCATION = {
+    "name": "Banya",
+    "admin1": "Queensland",
+    "latitude": -26.829099,
+    "longitude": 153.043996,
+}
+
+def format_weather_location_label(location):
+    """Build a display label such as 'Banya, Queensland'."""
+    name = location.get("name") or "Unknown"
+    admin1 = location.get("admin1") or ""
+    if admin1:
+        return f"{name}, {admin1}"
+    return name
+
+def load_weather_location():
     """
-    Fetch weather data from API
-    Cached for 5 minutes to reduce API calls
+    Load the saved weather location from disk.
+    Falls back to Banya if the file is missing or invalid.
+    """
+    try:
+        with open(WEATHER_LOCATION_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        latitude = float(data["latitude"])
+        longitude = float(data["longitude"])
+        name = str(data.get("name") or "").strip() or DEFAULT_WEATHER_LOCATION["name"]
+        admin1 = str(data.get("admin1") or "").strip()
+        return {
+            "name": name,
+            "admin1": admin1,
+            "latitude": latitude,
+            "longitude": longitude,
+        }
+    except FileNotFoundError:
+        return DEFAULT_WEATHER_LOCATION.copy()
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        print(f"Error loading weather location: {e}")
+        return DEFAULT_WEATHER_LOCATION.copy()
+
+def save_weather_location(location):
+    """Persist the selected weather location to data/weather_location.json."""
+    os.makedirs(os.path.dirname(WEATHER_LOCATION_PATH), exist_ok=True)
+    payload = {
+        "name": location["name"],
+        "admin1": location.get("admin1") or "",
+        "latitude": float(location["latitude"]),
+        "longitude": float(location["longitude"]),
+    }
+    with open(WEATHER_LOCATION_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return payload
+
+@st.cache_data(ttl=60)
+def search_australian_suburbs(query):
+    """
+    Search Australian suburbs via Open-Meteo Geocoding.
+    Returns a list of name/admin1/lat/lon dicts.
+    """
+    query = (query or "").strip()
+    if len(query) < 2:
+        return []
+
+    url = "https://geocoding-api.open-meteo.com/v1/search"
+    params = {
+        "name": query,
+        "count": 10,
+        "language": "en",
+        "format": "json",
+        "countryCode": "AU",
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code != 200:
+            print(f"Error searching suburbs: Status code {response.status_code}")
+            return []
+
+        results = response.json().get("results") or []
+        locations = []
+        for item in results:
+            name = item.get("name")
+            latitude = item.get("latitude")
+            longitude = item.get("longitude")
+            if not name or latitude is None or longitude is None:
+                continue
+            locations.append({
+                "name": name,
+                "admin1": item.get("admin1") or "",
+                "latitude": float(latitude),
+                "longitude": float(longitude),
+            })
+        return locations
+    except requests.exceptions.RequestException as e:
+        print(f"Error searching suburbs: {e}")
+        return []
+    except Exception as e:
+        print(f"Error processing suburb search: {e}")
+        return []
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def fetch_weather_data(latitude, longitude, location):
+    """
+    Fetch weather data from Open-Meteo for the given coordinates.
+    Cached for 5 minutes to reduce API calls.
     """
 
     url = "https://api.open-meteo.com/v1/forecast"
 
     params = {
-        "latitude": -26.829099,      # Latitude for Sydney
-        "longitude": 153.043996,     # Longitude for Sydney
+        "latitude": latitude,
+        "longitude": longitude,
         "current": "temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m",
         "hourly": "temperature_2m,rain",
         "timezone": "auto",
@@ -196,7 +297,7 @@ def fetch_weather_data():
                 "wind_speed": current.get('wind_speed_10m', '--'),
                 "precipitation": current.get('precipitation', '--'),
                 "humidity": current.get('relative_humidity_2m', '--'),
-                "location": "Banya"
+                "location": location
             }
         else:
             print(f"Error fetching data: Status code {response.status_code}")
@@ -211,7 +312,7 @@ def fetch_weather_data():
         "wind_speed": "--",
         "precipitation": "--",
         "humidity": "--",
-        "location": "Banya"
+        "location": location
     }
 
 @st.cache_data(ttl=60)  # Cache for 60 seconds
@@ -815,7 +916,7 @@ with st.sidebar:
       
         menu_selection = st.radio(
             "Navigation",
-            ["Dashboard", "Devices"],
+            ["Dashboard", "Devices", "Settings"],
             index=0,
             label_visibility="collapsed"
         )
@@ -959,7 +1060,12 @@ elif menu_selection == "Dashboard":
     st.markdown("---")
     
     # Weather Header
-    weather_data = fetch_weather_data()
+    weather_location = load_weather_location()
+    weather_data = fetch_weather_data(
+        weather_location["latitude"],
+        weather_location["longitude"],
+        format_weather_location_label(weather_location),
+    )
 
     st.markdown(f"""
         <div class="weather-header">
@@ -1314,3 +1420,58 @@ elif menu_selection == "Devices":
                     # Delete button to open modal
                     if st.button("🗑️ Delete Device", key=f"delete_{device_id}"):
                         delete_device_modal(device_id)
+
+elif menu_selection == "Settings":
+    st.markdown("### Settings")
+    st.markdown("Configure the Australian suburb used for dashboard weather.")
+
+    saved_label = st.session_state.pop("weather_location_saved", None)
+    if saved_label:
+        st.success(f"Weather location saved: {saved_label}")
+
+    current_location = load_weather_location()
+    st.markdown("**Current weather location**")
+    st.markdown(format_weather_location_label(current_location))
+    st.caption(f"{current_location['latitude']:.6f}, {current_location['longitude']:.6f}")
+
+    st.markdown("---")
+    st.markdown("**Search Australian suburbs**")
+
+    search_col, button_col = st.columns([4, 1])
+    with search_col:
+        suburb_query = st.text_input(
+            "Suburb",
+            placeholder="e.g., Banya or Parramatta",
+            label_visibility="collapsed",
+            key="weather_suburb_query",
+        )
+    with button_col:
+        search_clicked = st.button("Search", type="primary", key="weather_suburb_search")
+
+    if search_clicked:
+        query = (suburb_query or "").strip()
+        if len(query) < 2:
+            st.warning("Enter at least 2 characters to search.")
+            st.session_state.weather_search_results = []
+        else:
+            with st.spinner("Searching suburbs..."):
+                results = search_australian_suburbs(query)
+            st.session_state.weather_search_results = results
+            if not results:
+                st.info("No Australian suburbs found. Try a nearby locality.")
+
+    results = st.session_state.get("weather_search_results") or []
+    if results:
+        option_labels = [
+            f"{format_weather_location_label(item)} ({item['latitude']:.4f}, {item['longitude']:.4f})"
+            for item in results
+        ]
+        selected_label = st.selectbox("Matching suburbs", option_labels, key="weather_suburb_select")
+        selected_location = results[option_labels.index(selected_label)]
+
+        if st.button("Save location", type="primary", key="weather_location_save"):
+            save_weather_location(selected_location)
+            st.session_state.weather_search_results = []
+            st.session_state.weather_location_saved = format_weather_location_label(selected_location)
+            st.cache_data.clear()
+            st.rerun()

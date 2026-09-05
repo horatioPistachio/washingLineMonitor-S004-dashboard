@@ -4,6 +4,8 @@ services:
     container_name: washing-line-dashboard
     ports:
       - "8501:8501"
+    volumes:
+      - ./data:/app/data
     environment:
       # Backend API endpoint - connects to S003 webserver
       API_ENDPOINT: http://app:8000

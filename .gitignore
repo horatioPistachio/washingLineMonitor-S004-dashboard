@@ -137,6 +137,9 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+
+# Saved dashboard settings
+data/
 .venv
 env/
 venv/

@@ -5,6 +5,7 @@ Dashboard for the washing line monitor. Links with backend in washingLineMonitor
 ## Features
 
 - **Real-time Weather Display**: Shows current weather conditions including temperature, humidity, wind speed, and precipitation
+- **Weather Location Settings**: Search Australian suburbs and save the location used by the dashboard weather header
 - **Device Management**: View and manage all IoT devices with their status, location, and last activity
 - **Notifications**: Monitor system alerts and device notifications from ntfy.sh
 - **System Metrics**: Real-time system statistics from Glances (CPU, memory, disk usage)
@@ -94,6 +95,8 @@ docker-compose up -d --build
 
 **Note:** The dashboard connects to backend services via Docker network. Both docker-compose files must be running for full functionality.
 
+Weather location is saved to `data/weather_location.json` (gitignored). Docker Compose bind-mounts `./data` into the container so the setting survives rebuilds. If the file is missing, weather defaults to Banya, Queensland.
+
 ## API Integration
 
 The dashboard integrates with the following API endpoints:
@@ -101,11 +104,24 @@ The dashboard integrates with the following API endpoints:
 ### Device Management
 - `GET /api/v1/devices` - List all devices
 - `GET /api/v1/devices/{device_id}` - Get device configuration
-- `GET /api/v1/telemetry/{device_id}` - Get device telemetry data
+- `GWeather
+- `GET https://geocoding-api.open-meteo.com/v1/search` - Australian suburb search (`countryCode=AU`)
+- `GET https://api.open-meteo.com/v1/forecast` - Current weather for the saved latitude/longitude
+
+### ET /api/v1/telemetry/{device_id}` - Get device telemetry data
 
 ### Notifications
 - `GET https://ntfy.sh/{topic}/json?poll=1&since=24h` - Fetch notifications
+load_weather_location()` / `save_weather_location()`
+Reads and writes `data/weather_location.json` (`name`, `admin1`, `latitude`, `longitude`). Falls back to Banya if the file is missing or invalid.
 
+### `search_australian_suburbs()`
+Searches Open-Meteo Geocoding for Australian localities. Used by the Settings page.
+
+### `fetch_weather_data()`
+Fetches current weather for the saved coordinates. Cached for 5 minutes.
+
+### `
 ### System Statistics
 - `GET http://localhost:61208/api/3/all` - Glances API for system metrics (CPU, memory, disk)
 
@@ -126,7 +142,9 @@ Fetches complete device information including:
 
 This function makes concurrent requests to optimize performance when fetching data for multiple devices.
 
-### `fetch_system_metrics()`
+### data/                       # Saved settings (gitignored)
+│   └── weather_location.json
+├── `fetch_system_metrics()`
 Fetches real-time system statistics from Glances API. Returns metrics for:
 - Disk space usage (percentage and total GB)
 - Memory usage (percentage and total GB)

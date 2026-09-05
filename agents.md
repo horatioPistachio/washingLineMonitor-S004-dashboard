@@ -45,7 +45,7 @@ app.py
 # 1. Add to sidebar radio options
 menu_selection = st.radio(
     "Navigation",
-    ["Dashboard", "Devices", "New Page"],  # Add here
+    ["Dashboard", "Devices", "Settings", "New Page"],  # Add here
     ...
 )
 
@@ -147,6 +147,7 @@ st.line_chart(data)
 |------|---------|
 | `app.py` | Main Streamlit application |
 | `requirements.txt` | Python dependencies |
+| `data/weather_location.json` | Saved weather suburb (not in git) |
 | `.env` | Environment configuration (not in git) |
 | `.env.example` | Template for environment variables |
 | `.prompts/` | AI prompt templates for features |
