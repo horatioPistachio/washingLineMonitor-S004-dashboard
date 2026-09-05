@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import datetime, timedelta
 import json
 import requests
 import os
+import streamlit.components.v1 as components
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
@@ -653,7 +655,7 @@ def fetch_device_completion_time(device_id):
     Fetch completion timestamp for a device.
 
     Returns:
-        str | None: RFC3339 timestamp string when available, otherwise None.
+        tuple: (RFC3339 timestamp string | None, warning message | None)
     """
     import os
 
@@ -674,32 +676,62 @@ def fetch_device_completion_time(device_id):
 
                 if isinstance(data, str):
                     value = data.strip().strip('"')
-                    return value or None
+                    if value:
+                        return (value, None)
+
+                    warning = f"Completion time response for {device_id} was empty"
+                    print(f"Warning: {warning}")
+                    return (None, warning)
 
                 if isinstance(data, dict):
                     value = data.get('completion_time') or data.get('timestamp')
                     if isinstance(value, str):
                         value = value.strip().strip('"')
-                    return value or None
+                    if value:
+                        return (value, None)
 
-                return None
+                    warning = f"Completion time response for {device_id} did not contain a timestamp"
+                    print(f"Warning: {warning}")
+                    return (None, warning)
+
+                warning = f"Completion time response for {device_id} had an unsupported JSON format"
+                print(f"Warning: {warning}")
+                return (None, warning)
 
             # Non-JSON body fallback (e.g., text/plain with RFC3339 timestamp)
             value = response.text.strip().strip('"')
-            return value or None
+            if value:
+                return (value, None)
+
+            warning = f"Completion time response for {device_id} was empty"
+            print(f"Warning: {warning}")
+            return (None, warning)
 
         if response.status_code == 404:
-            return None
+            warning = f"No completion time found for {device_id} (endpoint returned 404)"
+            print(f"Warning: {warning}")
+            return (None, warning)
 
-        print(f"Error fetching completion time for {device_id}: status {response.status_code}")
-        return None
+        warning = f"Failed to fetch completion time for {device_id}: status {response.status_code}"
+        print(f"Warning: {warning}")
+        return (None, warning)
 
     except requests.exceptions.RequestException as e:
-        print(f"Network error fetching completion time for {device_id}: {e}")
-        return None
+        warning = f"Network error fetching completion time for {device_id}: {e}"
+        print(f"Warning: {warning}")
+        return (None, warning)
     except Exception as e:
-        print(f"Error processing completion time for {device_id}: {e}")
-        return None
+        warning = f"Error processing completion time for {device_id}: {e}"
+        print(f"Warning: {warning}")
+        return (None, warning)
+
+def emit_browser_console_warning(message):
+    """Write a warning to the browser developer console."""
+    if message:
+        components.html(
+            f"<script>console.warn({json.dumps(message)});</script>",
+            height=0,
+        )
 
 def format_completion_time_for_user(completion_time, user_timezone=None):
     """
@@ -787,6 +819,35 @@ def process_telemetry_data(telemetry_records, user_timezone=None):
 def convert_df_to_csv(df):
     """Convert DataFrame to CSV for download"""
     return df.to_csv(index=False).encode('utf-8')
+
+def plot_telemetry_metric(plot_df, metric):
+    """
+    Render a telemetry series without Streamlit's hover overlay.
+
+    st.line_chart adds an empty highlight layer that Vega warns on when a
+    series has no finite points at hover time.
+    """
+    y_min = float(plot_df[metric].min())
+    y_max = float(plot_df[metric].max())
+    if y_min == y_max:
+        pad = abs(y_min) * 0.05 if y_min != 0 else 1.0
+        y_min -= pad
+        y_max += pad
+
+    chart = (
+        alt.Chart(plot_df)
+        .mark_line()
+        .encode(
+            x=alt.X("timestamp:T", title="Time"),
+            y=alt.Y(
+                f"{metric}:Q",
+                title=metric.replace("_", " ").title(),
+                scale=alt.Scale(domain=[y_min, y_max], zero=False),
+            ),
+        )
+        .interactive()
+    )
+    st.altair_chart(chart, use_container_width=True)
 
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def fetch_device_list(user_timezone=None):
@@ -971,7 +1032,8 @@ if viewing_device:
     with st.spinner("Loading telemetry data..."):
         success, telemetry_data, message = fetch_telemetry_data(device_id, start_time, end_time)
 
-    completion_time = fetch_device_completion_time(device_id)
+    completion_time, completion_warning = fetch_device_completion_time(device_id)
+    emit_browser_console_warning(completion_warning)
     
     if not success:
         st.error(message)
@@ -1043,8 +1105,17 @@ if viewing_device:
         else:
             for metric in metric_columns:
                 st.markdown(f"#### {metric.replace('_', ' ').title()}")
-                plot_df = df[['timestamp', metric]].copy().dropna(subset=[metric]).set_index('timestamp')
-                st.line_chart(plot_df, use_container_width=True)
+                plot_df = df[['timestamp', metric]].copy()
+                numeric = pd.to_numeric(plot_df[metric], errors='coerce')
+                finite_mask = numeric.notna() & (numeric != float('inf')) & (numeric != float('-inf'))
+                plot_df = plot_df.loc[finite_mask].copy()
+                plot_df[metric] = numeric.loc[finite_mask]
+
+                if plot_df.empty:
+                    st.info(f"No numeric data available for {metric.replace('_', ' ')}.")
+                    continue
+
+                plot_telemetry_metric(plot_df, metric)
 
 elif menu_selection == "Dashboard":
     user_timezone = getattr(st.context, 'timezone', None)
