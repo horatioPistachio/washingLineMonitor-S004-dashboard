@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import json
 import requests
 import os
+import re
 import streamlit.components.v1 as components
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -650,78 +651,41 @@ def fetch_telemetry_data(device_id, start_time=None, end_time=None):
         return (False, [], f"Error: {str(e)}")
 
 @st.cache_data(ttl=30)  # Cache for 30 seconds
-def fetch_device_completion_time(device_id):
+def fetch_device_status(device_id):
     """
-    Fetch completion timestamp for a device.
+    Fetch the complete status response for a device.
 
     Returns:
-        tuple: (RFC3339 timestamp string | None, warning message | None)
+        tuple: (JSON-compatible response | None, warning message | None)
     """
     import os
 
     device_id = device_id.strip() if isinstance(device_id, str) else device_id
 
     endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
-    url = f"{endpoint}/api/v1/devices/{device_id}/completion_time"
+    url = f"{endpoint}/api/v1/devices/{device_id}/status"
 
     try:
         response = requests.get(url, timeout=10)
 
         if response.status_code == 200:
-            # Accept common payload shapes: JSON string, JSON object, or plain text.
-            content_type = response.headers.get('content-type', '').lower()
-
-            if 'application/json' in content_type:
-                data = response.json()
-
-                if isinstance(data, str):
-                    value = data.strip().strip('"')
-                    if value:
-                        return (value, None)
-
-                    warning = f"Completion time response for {device_id} was empty"
-                    print(f"Warning: {warning}")
-                    return (None, warning)
-
-                if isinstance(data, dict):
-                    value = data.get('completion_time') or data.get('timestamp')
-                    if isinstance(value, str):
-                        value = value.strip().strip('"')
-                    if value:
-                        return (value, None)
-
-                    warning = f"Completion time response for {device_id} did not contain a timestamp"
-                    print(f"Warning: {warning}")
-                    return (None, warning)
-
-                warning = f"Completion time response for {device_id} had an unsupported JSON format"
-                print(f"Warning: {warning}")
-                return (None, warning)
-
-            # Non-JSON body fallback (e.g., text/plain with RFC3339 timestamp)
-            value = response.text.strip().strip('"')
-            if value:
-                return (value, None)
-
-            warning = f"Completion time response for {device_id} was empty"
-            print(f"Warning: {warning}")
-            return (None, warning)
+            return (response.json(), None)
 
         if response.status_code == 404:
-            warning = f"No completion time found for {device_id} (endpoint returned 404)"
+            warning = f"No status found for {device_id} (endpoint returned 404)"
             print(f"Warning: {warning}")
             return (None, warning)
 
-        warning = f"Failed to fetch completion time for {device_id}: status {response.status_code}"
+        warning = f"Failed to fetch status for {device_id}: status {response.status_code}"
         print(f"Warning: {warning}")
         return (None, warning)
 
     except requests.exceptions.RequestException as e:
-        warning = f"Network error fetching completion time for {device_id}: {e}"
+        warning = f"Network error fetching status for {device_id}: {e}"
         print(f"Warning: {warning}")
         return (None, warning)
     except Exception as e:
-        warning = f"Error processing completion time for {device_id}: {e}"
+        warning = f"Error processing status for {device_id}: {e}"
         print(f"Warning: {warning}")
         return (None, warning)
 
@@ -733,21 +697,41 @@ def emit_browser_console_warning(message):
             height=0,
         )
 
-def format_completion_time_for_user(completion_time, user_timezone=None):
-    """
-    Convert an RFC3339 timestamp string to the user's timezone.
+def render_status_json(status_data, user_timezone=None):
+    """Render status JSON as a readable nested list with bold keys."""
+    def format_value(value):
+        if isinstance(value, str):
+            if re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", value):
+                formatted_timestamp = format_timestamp_for_user(value, user_timezone)
+                if formatted_timestamp:
+                    return formatted_timestamp
+            return value
+        return json.dumps(value, ensure_ascii=True)
 
-    Returns:
-        str | None: Formatted local datetime string, or None if invalid.
-    """
-    if not completion_time or not isinstance(completion_time, str):
-        return None
+    def build_lines(value, indent=0):
+        prefix = "  " * indent
+        lines = []
 
-    try:
-        return format_timestamp_for_user(completion_time, user_timezone)
-    except Exception as e:
-        print(f"Error formatting completion time '{completion_time}': {e}")
-        return None
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if isinstance(child, (dict, list)):
+                    lines.append(f"{prefix}- **{key}:**")
+                    lines.extend(build_lines(child, indent + 1))
+                else:
+                    lines.append(f"{prefix}- **{key}:** {format_value(child)}")
+        elif isinstance(value, list):
+            for child in value:
+                if isinstance(child, (dict, list)):
+                    lines.append(f"{prefix}-")
+                    lines.extend(build_lines(child, indent + 1))
+                else:
+                    lines.append(f"{prefix}- {format_value(child)}")
+        else:
+            lines.append(f"{prefix}- {format_value(value)}")
+
+        return lines
+
+    st.markdown("\n".join(build_lines(status_data)))
 
 def process_telemetry_data(telemetry_records, user_timezone=None):
     """
@@ -997,11 +981,18 @@ with st.sidebar:
 if viewing_device:
     device_id = query_params.get("device_id")
     user_timezone = getattr(st.context, 'timezone', None)
+
+    if 'show_device_edit' not in st.session_state:
+        st.session_state.show_device_edit = False
     
     # Device page header
-    col_title, col_refresh = st.columns([6, 1])
+    col_title, col_edit, col_refresh = st.columns([5, 1, 1])
     with col_title:
         st.markdown(f"### Device {device_id}")
+    with col_edit:
+        if st.button("✏️ Edit", key="edit_device_detail"):
+            st.session_state.show_device_edit = not st.session_state.show_device_edit
+            st.rerun()
     with col_refresh:
         if st.button("🔄 Refresh", key="refresh_device_detail"):
             st.cache_data.clear()
@@ -1010,6 +1001,52 @@ if viewing_device:
     # Fetch device config for location
     success, config, message = fetch_device_config(device_id)
     location = config.get('location', 'Unknown') if success else 'Unknown'
+
+    if st.session_state.show_device_edit:
+        with st.expander("Edit Device Configuration", expanded=True):
+            if not success:
+                st.error(message)
+            else:
+                formatted_config = json.dumps(config, indent=2)
+
+                with st.form(key="edit_device_detail_form"):
+                    st.text_input("Device ID", value=device_id, disabled=True)
+                    config_text = st.text_area(
+                        "Configuration (JSON) *",
+                        value=formatted_config,
+                        height=150,
+                        help="Edit device configuration as valid JSON"
+                    )
+
+                    col_submit, col_cancel = st.columns([1, 1])
+                    with col_submit:
+                        submit_button = st.form_submit_button("Save Changes", type="primary")
+                    with col_cancel:
+                        cancel_button = st.form_submit_button("Cancel")
+
+                    if cancel_button:
+                        st.session_state.show_device_edit = False
+                        st.rerun()
+
+                    if submit_button:
+                        try:
+                            config_dict = json.loads(config_text)
+                        except json.JSONDecodeError as e:
+                            st.error(f"Invalid JSON: {str(e)}")
+                        else:
+                            with st.spinner("Updating device..."):
+                                update_success, update_message, status_code = update_device_config(
+                                    device_id,
+                                    config_dict,
+                                )
+
+                            if update_success:
+                                st.success(update_message)
+                                st.session_state.show_device_edit = False
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error(update_message)
     
     # Time range options
     time_ranges = {
@@ -1032,8 +1069,8 @@ if viewing_device:
     with st.spinner("Loading telemetry data..."):
         success, telemetry_data, message = fetch_telemetry_data(device_id, start_time, end_time)
 
-    completion_time, completion_warning = fetch_device_completion_time(device_id)
-    emit_browser_console_warning(completion_warning)
+    status_data, status_warning = fetch_device_status(device_id)
+    emit_browser_console_warning(status_warning)
     
     if not success:
         st.error(message)
@@ -1087,11 +1124,9 @@ if viewing_device:
     st.markdown("---")
     
     # Plots section
-    if completion_time:
-        formatted_completion_time = format_completion_time_for_user(completion_time, user_timezone)
-        if formatted_completion_time:
-            st.markdown("**Completion Time**")
-            st.markdown(formatted_completion_time)
+    if status_data is not None:
+        st.markdown("**Device Status**")
+        render_status_json(status_data, user_timezone)
 
     if df.empty:
         st.info("No telemetry data available for the selected time range.")
