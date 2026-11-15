@@ -9,6 +9,7 @@ import re
 import streamlit.components.v1 as components
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
+from urllib.parse import urlsplit
 
 # Load environment variables from .env file
 load_dotenv()
@@ -1247,9 +1248,23 @@ elif menu_selection == "Dashboard":
             st.markdown("### --")
             st.markdown("<small>:orange[Glances unavailable]</small>", unsafe_allow_html=True)
     
-    # Link to Glances web interface
-    glances_url = os.environ.get('GLANCES_ENDPOINT', 'http://localhost:61208')
-    st.markdown(f"[📊 View Detailed System Stats]({glances_url})")
+    # The API endpoint may be a Docker-only hostname, so use the browser-facing host.
+    glances_url = os.environ.get('GLANCES_PUBLIC_URL')
+    if not glances_url:
+        host = st.context.headers.get('host', '')
+        try:
+            hostname = urlsplit(f"//{host}").hostname
+        except ValueError:
+            hostname = None
+        if hostname:
+            if ':' in hostname:
+                hostname = f"[{hostname}]"
+            glances_url = f"http://{hostname}:61208"
+
+    if glances_url:
+        st.markdown(f"[📊 View Detailed System Stats]({glances_url})")
+    else:
+        st.warning("Cannot determine the Glances web address. Set GLANCES_PUBLIC_URL.")
 
 elif menu_selection == "Devices":
     user_timezone = getattr(st.context, 'timezone', None)

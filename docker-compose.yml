@@ -13,6 +13,8 @@ services:
       NTFY_TOPIC: ${NTFY_TOPIC:-washingLineMonitor}
       # Glances endpoint - connects to S003 glances service
       GLANCES_ENDPOINT: http://glances:61208
+      # Optional browser-accessible Glances URL, if it differs from the dashboard host
+      GLANCES_PUBLIC_URL: ${GLANCES_PUBLIC_URL:-}
     networks:
       - washing-line-network
     restart: unless-stopped

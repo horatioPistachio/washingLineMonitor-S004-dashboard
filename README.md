@@ -52,6 +52,7 @@ Required environment variables:
 - `API_ENDPOINT`: Base URL for the washing line monitor API (default: http://washinglinemonitor-s003-webserver-app)
 - `NTFY_TOPIC`: ntfy.sh topic for notifications (default: washingLineMonitor)
 - `GLANCES_ENDPOINT`: Glances API endpoint for system statistics (default: http://localhost:61208)
+- `GLANCES_PUBLIC_URL`: Optional browser-accessible Glances URL. By default, the detailed stats link uses the dashboard's hostname on port 61208; set this if Glances is on another host, port, or URL. `GLANCES_ENDPOINT` remains the server-side API address and may use a Docker-only hostname.
 
 ### Running the Dashboard
 
@@ -94,6 +95,7 @@ docker-compose up -d --build
 ```
 
 **Note:** The dashboard connects to backend services via Docker network. Both docker-compose files must be running for full functionality.
+Glances must also publish port 61208 on the host and be reachable from the browser for the detailed stats link to work.
 
 Weather location is saved to `data/weather_location.json` (gitignored). Docker Compose bind-mounts `./data` into the container so the setting survives rebuilds. If the file is missing, weather defaults to Banya, Queensland.
 
@@ -198,4 +200,3 @@ The dashboard is built with Streamlit and uses:
 ## License
 
 [Add license information here]
-
