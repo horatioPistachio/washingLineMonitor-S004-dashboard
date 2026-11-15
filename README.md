@@ -7,6 +7,7 @@ Dashboard for the washing line monitor. Links with backend in washingLineMonitor
 - **Real-time Weather Display**: Shows current weather conditions including temperature, humidity, wind speed, and precipitation
 - **Weather Location Settings**: Search Australian suburbs and save the location used by the dashboard weather header
 - **Device Management**: View and manage all IoT devices with their status, location, and last activity
+- **Telemetry Charts**: Zoom and pan the time axis while keeping each chart's vertical scale fixed
 - **Notifications**: Monitor system alerts and device notifications from ntfy.sh
 - **System Metrics**: Real-time system statistics from Glances (CPU, memory, disk usage)
 

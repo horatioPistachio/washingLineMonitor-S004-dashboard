@@ -830,7 +830,7 @@ def plot_telemetry_metric(plot_df, metric):
                 scale=alt.Scale(domain=[y_min, y_max], zero=False),
             ),
         )
-        .interactive()
+        .interactive(bind_y=False)
     )
     st.altair_chart(chart, use_container_width=True)
 
