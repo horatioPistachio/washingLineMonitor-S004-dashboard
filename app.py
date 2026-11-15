@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import json
 import requests
 import os
+import math
 import re
 import streamlit.components.v1 as components
 from zoneinfo import ZoneInfo
@@ -689,6 +690,149 @@ def fetch_device_status(device_id):
         print(f"Warning: {warning}")
         return (None, warning)
 
+@st.cache_data(ttl=30)
+def fetch_device_state_vector(device_id):
+    """Fetch the model parameters used for the drying-time prediction."""
+    device_id = device_id.strip() if isinstance(device_id, str) else device_id
+    endpoint = os.environ.get('API_ENDPOINT', 'http://127.0.0.1:8000/')
+    url = f"{endpoint}/api/v1/devices/{device_id}/state_vector"
+
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            return (response.json(), None)
+
+        warning = f"Failed to fetch state vector for {device_id}: status {response.status_code}"
+        print(f"Warning: {warning}")
+        return (None, warning)
+    except requests.exceptions.RequestException as e:
+        warning = f"Network error fetching state vector for {device_id}: {e}"
+        print(f"Warning: {warning}")
+        return (None, warning)
+    except Exception as e:
+        warning = f"Error processing state vector for {device_id}: {e}"
+        print(f"Warning: {warning}")
+        return (None, warning)
+
+def extract_predicted_drying_time(status_data, user_timezone=None):
+    """Find a predicted completion timestamp in a status response."""
+    timestamp_keys = {
+        "predicted_drying_time",
+        "predicted_completion",
+        "completion_time",
+        "drying_time",
+        "eta",
+    }
+
+    def find_timestamp(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key.lower() in timestamp_keys and isinstance(child, (str, datetime)):
+                    parsed = to_user_datetime(child, user_timezone)
+                    if parsed:
+                        return parsed
+                nested = find_timestamp(child)
+                if nested:
+                    return nested
+        elif isinstance(value, list):
+            for child in value:
+                nested = find_timestamp(child)
+                if nested:
+                    return nested
+        return None
+
+    return find_timestamp(status_data)
+
+def resistance_from_state(state_vector, t_minutes):
+    """Evaluate the state-vector resistance model for minutes since start_time."""
+    try:
+        moisture = (
+            float(state_vector["m"]) *
+            math.exp(-float(state_vector["k"]) * t_minutes) -
+            float(state_vector["m_c"])
+        )
+        if moisture <= 0:
+            return None
+
+        resistance = moisture ** (-float(state_vector["tau"])) + float(state_vector["r_offset"])
+        return float(resistance) if math.isfinite(resistance) else None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+def build_predicted_resistance_series(
+    state_vector,
+    now,
+    predicted_drying_time,
+    fallback_start_time=None,
+    user_timezone=None,
+):
+    """Build valid predicted resistance points between now and completion."""
+    if not state_vector or not predicted_drying_time or now >= predicted_drying_time:
+        return pd.DataFrame(columns=["timestamp", "predicted_resistance"])
+
+    start_time = to_user_datetime(state_vector.get("start_time"), user_timezone)
+    if start_time is None:
+        start_time = fallback_start_time
+    if start_time is None:
+        print("Warning: state vector has no usable start_time")
+        return pd.DataFrame(columns=["timestamp", "predicted_resistance"])
+
+    duration_minutes = (predicted_drying_time - now).total_seconds() / 60
+    point_count = min(300, max(2, int(duration_minutes) + 1))
+    timestamps = pd.date_range(start=now, end=predicted_drying_time, periods=point_count)
+    rows = []
+    for timestamp in timestamps:
+        t_minutes = (timestamp.to_pydatetime() - start_time).total_seconds() / 60
+        resistance = resistance_from_state(state_vector, t_minutes)
+        if resistance is not None:
+            rows.append({
+                "timestamp": timestamp,
+                "predicted_resistance": resistance,
+            })
+
+    return pd.DataFrame(rows, columns=["timestamp", "predicted_resistance"])
+
+def plot_drying_time_chart(historical_df, predicted_df):
+    """Render historical resistance with an optional predicted overlay."""
+    series = []
+    if not historical_df.empty:
+        series.append(historical_df["resistance"])
+    if not predicted_df.empty:
+        series.append(predicted_df["predicted_resistance"])
+    if not series:
+        return
+
+    y_min = min(float(values.min()) for values in series)
+    y_max = max(float(values.max()) for values in series)
+    if y_min == y_max:
+        padding = abs(y_min) * 0.05 if y_min != 0 else 1.0
+        y_min -= padding
+        y_max += padding
+
+    x_frames = []
+    if not historical_df.empty:
+        x_frames.append(historical_df["timestamp"])
+    if not predicted_df.empty:
+        x_frames.append(predicted_df["timestamp"])
+    x_min = min(values.min() for values in x_frames)
+    x_max = max(values.max() for values in x_frames)
+
+    layers = []
+    if not historical_df.empty:
+        historical_chart = alt.Chart(historical_df).mark_line(color="#2176FF").encode(
+            x=alt.X("timestamp:T", title="Time", scale=alt.Scale(domain=[x_min, x_max])),
+            y=alt.Y("resistance:Q", title="Resistance", scale=alt.Scale(domain=[y_min, y_max], zero=False)),
+        )
+        layers.append(historical_chart)
+    if not predicted_df.empty:
+        predicted_chart = alt.Chart(predicted_df).mark_line(color="red", strokeDash=[6, 4]).encode(
+            x=alt.X("timestamp:T", title="Time", scale=alt.Scale(domain=[x_min, x_max])),
+            y=alt.Y("predicted_resistance:Q", title="Resistance", scale=alt.Scale(domain=[y_min, y_max], zero=False)),
+        )
+        layers.append(predicted_chart)
+
+    st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+
 def emit_browser_console_warning(message):
     """Write a warning to the browser developer console."""
     if message:
@@ -1070,7 +1214,9 @@ if viewing_device:
         success, telemetry_data, message = fetch_telemetry_data(device_id, start_time, end_time)
 
     status_data, status_warning = fetch_device_status(device_id)
+    state_vector, state_vector_warning = fetch_device_state_vector(device_id)
     emit_browser_console_warning(status_warning)
+    emit_browser_console_warning(state_vector_warning)
     
     if not success:
         st.error(message)
@@ -1127,6 +1273,33 @@ if viewing_device:
     if status_data is not None:
         st.markdown("**Device Status**")
         render_status_json(status_data, user_timezone)
+
+    st.markdown("**Drying Time**")
+    drying_time = extract_predicted_drying_time(status_data, user_timezone)
+    _, user_tzinfo = get_timezone_info(user_timezone)
+    prediction_now = datetime.now(user_tzinfo)
+    fallback_start_time = None
+    historical_resistance = pd.DataFrame(columns=["timestamp", "resistance"])
+    if not df.empty and "resistance" in df.columns:
+        historical_resistance = df[["timestamp", "resistance"]].copy()
+        numeric = pd.to_numeric(historical_resistance["resistance"], errors="coerce")
+        finite_mask = numeric.notna() & (numeric != float("inf")) & (numeric != float("-inf"))
+        historical_resistance = historical_resistance.loc[finite_mask].copy()
+        historical_resistance["resistance"] = numeric.loc[finite_mask]
+        if not historical_resistance.empty:
+            fallback_start_time = historical_resistance["timestamp"].min().to_pydatetime()
+
+    predicted_resistance = build_predicted_resistance_series(
+        state_vector,
+        prediction_now,
+        drying_time,
+        fallback_start_time,
+        user_timezone,
+    )
+    if historical_resistance.empty and predicted_resistance.empty:
+        st.info("No resistance prediction data available.")
+    else:
+        plot_drying_time_chart(historical_resistance, predicted_resistance)
 
     if df.empty:
         st.info("No telemetry data available for the selected time range.")
